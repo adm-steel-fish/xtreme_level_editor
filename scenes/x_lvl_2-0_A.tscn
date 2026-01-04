@@ -23030,7 +23030,7 @@ shadow_enabled = true
 transform = Transform3D(0.8012747, 0, 0.59829664, 0, 1, 0, -0.59829664, 0, 0.8012747, 97.14507, 64.715576, 103.07259)
 
 [node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 95.45027, 67.84687, 85.705055)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 95.45027, 63.84687, 110.705055)
 script = ExtResource("3_5ljgr")
 target = NodePath("../Player_1-4")
 pitch_degrees = -15.0
