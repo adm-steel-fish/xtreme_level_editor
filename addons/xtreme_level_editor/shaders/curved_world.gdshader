@@ -2,8 +2,8 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
 
 // Curved World Shader for Sonic Xtreme-style effect
-// Applies vertex displacement to curve the world AWAY from the camera
-// The world curves UP at the edges, creating the "standing on a planet" look
+// Displaces vertices AWAY from the camera (Z depth) based on distance from screen center
+// Creates a spherical effect where left, right, top, and bottom edges curve away
 
 group_uniforms curvature;
 // The center point of the curvature (usually player/camera position)
@@ -13,9 +13,9 @@ uniform vec3 curve_center = vec3(0.0, 0.0, 0.0);
 uniform float curve_intensity : hint_range(0.0, 0.1, 0.001) = 0.01;
 
 // Curvature mode
-// 0 = Spherical (curves in all horizontal directions)
-// 1 = Cylindrical X (curves along X axis only)
-// 2 = Cylindrical Z (curves along Z axis only)
+// 0 = Spherical (curves in all directions - left, right, top, bottom)
+// 1 = Cylindrical X (curves left/right only)
+// 2 = Cylindrical Y (curves top/bottom only)
 uniform int curve_mode : hint_range(0, 2, 1) = 0;
 
 // Maximum distance at which curvature is applied
@@ -38,32 +38,37 @@ void vertex() {
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	
 	if (curve_enabled) {
-		// Calculate horizontal distance from curve center
-		vec2 horizontal_offset = world_position.xz - curve_center.xz;
+		// Calculate offset from curve center
+		// X = left/right distance from center
+		// Y = up/down distance from center (height difference)
+		float offset_x = world_position.x - curve_center.x;
+		float offset_y = world_position.y - curve_center.y;
+		
 		float distance_sq = 0.0;
 		
 		if (curve_mode == 0) {
-			// Spherical - use full horizontal distance
-			distance_sq = dot(horizontal_offset, horizontal_offset);
+			// Spherical - use both X and Y distance (curves all edges away)
+			distance_sq = offset_x * offset_x + offset_y * offset_y;
 		} else if (curve_mode == 1) {
-			// Cylindrical X - only curve based on X distance
-			distance_sq = horizontal_offset.x * horizontal_offset.x;
+			// Cylindrical X - only curve based on X distance (left/right)
+			distance_sq = offset_x * offset_x;
 		} else {
-			// Cylindrical Z - only curve based on Z distance
-			distance_sq = horizontal_offset.y * horizontal_offset.y;
+			// Cylindrical Y - only curve based on Y distance (top/bottom)
+			distance_sq = offset_y * offset_y;
 		}
 		
-		// Calculate vertical displacement (parabolic curve)
-		// POSITIVE displacement = world curves UP and away from camera (Sonic Xtreme style)
+		// Calculate Z displacement (push vertices AWAY from camera)
+		// Positive Z displacement pushes geometry further from camera
 		float displacement = curve_intensity * distance_sq;
 		
-		// Apply distance falloff to prevent extreme curvature at far distances
-		float distance_factor = clamp(1.0 - sqrt(distance_sq) / curve_max_distance, 0.0, 1.0);
+		// Apply distance falloff based on Z distance to prevent extreme curvature
+		float z_distance = abs(world_position.z - curve_center.z);
+		float distance_factor = clamp(1.0 - z_distance / curve_max_distance, 0.0, 1.0);
 		displacement *= distance_factor;
 		
-		// Apply the displacement in world space, then convert back to local
+		// Apply the displacement in world space (push away in Z)
 		vec3 displaced_world = world_position;
-		displaced_world.y += displacement;
+		displaced_world.z += displacement;
 		
 		// Convert back to local space
 		VERTEX = (inverse(MODEL_MATRIX) * vec4(displaced_world, 1.0)).xyz;
