@@ -12,12 +12,14 @@ enum State {
 	# Grounded states
 	IDLE,
 	MOVING,
+	SKIDDING,
 	SPIN_DASH_CHARGE,
 	ROLLING,
 	
 	# Airborne states
 	AIRBORNE,
 	AIR_ROLLING,
+	SIDE_JUMP,
 	HOMING_ATTACK,
 	BUTT_BOUNCE_DESCENDING,
 	BUTT_BOUNCE_REBOUNDING,
@@ -26,8 +28,18 @@ enum State {
 	WALL_HUG,
 	WALL_JUMP,
 	
+	# Rail states
+	RAIL_GRINDING,
+	
+	# Swimming states
+	SWIMMING_SURFACE,
+	SWIMMING_SUBMERGED,
+	SWIMMING_SPIN_ATTACK,
+	SWIMMING_DRILL_DASH,
+	
 	# Special states
 	LIGHT_DASH,
+	AUTO_PATH,
 	HURT
 }
 #endregion
@@ -70,10 +82,20 @@ enum State {
 @export var jump_velocity: float = 15.0
 ## Double jump velocity
 @export var double_jump_velocity: float = 12.0
+## Side jump velocity (from skid)
+@export var side_jump_velocity: float = 17.0
 ## Jump buffer time (allows pressing jump slightly before landing)
 @export var jump_buffer_time: float = 0.1
 ## Coyote time (allows jumping shortly after leaving ground)
 @export var coyote_time: float = 0.15
+
+@export_group("Skidding")
+## Deceleration rate while skidding
+@export var skid_deceleration: float = 50.0
+## Minimum speed to trigger a skid (below this, just turn normally)
+@export var skid_min_speed: float = 5.0
+## Threshold for detecting opposite input (dot product, -1 = perfect opposite)
+@export var skid_opposite_threshold: float = -0.5
 #endregion
 
 #region Exported Variables - Spin Dash & Rolling
@@ -140,6 +162,50 @@ enum State {
 @export var light_dash_detection_range: float = 5.0
 ## Speed during light dash
 @export var light_dash_speed: float = 40.0
+
+@export_group("Rail Grinding")
+## Base speed on rails
+@export var rail_base_speed: float = 15.0
+## Speed boost per CTRL press
+@export var rail_speed_boost_increment: float = 2.0
+## Maximum rail speed
+@export var rail_max_speed: float = 35.0
+## Speed decay rate (how fast boost decays back to base)
+@export var rail_speed_decay: float = 3.0
+## Jump velocity when jumping off rail
+@export var rail_jump_velocity: float = 12.0
+
+@export_group("Auto Path")
+## Speed along automatic path (can be overridden per-path)
+@export var auto_path_default_speed: float = 20.0
+
+@export_group("Swimming")
+## Swim speed (horizontal movement)
+@export var swim_max_speed: float = 10.0
+## Swim acceleration
+@export var swim_acceleration: float = 30.0
+## Swim deceleration (when no input)
+@export var swim_deceleration: float = 15.0
+## Vertical swim speed (when holding jump or action)
+@export var swim_vertical_speed: float = 8.0
+## Jump velocity when jumping out of water from surface
+@export var swim_surface_jump_velocity: float = 12.0
+## Submersion threshold (0.0 to 1.0, where 0.67 = 2/3 submerged)
+@export var swim_submersion_threshold: float = 0.67
+## Spin attack radius
+@export var swim_spin_attack_radius: float = 3.0
+## Spin attack duration (seconds)
+@export var swim_spin_attack_duration: float = 0.5
+## Number of direction alternations needed to trigger spin attack
+@export var swim_spin_attack_input_count: int = 4
+## Time window to perform direction alternations (seconds)
+@export var swim_spin_attack_input_window: float = 0.5
+## Drill dash speed
+@export var swim_drill_dash_speed: float = 25.0
+## Drill dash duration (seconds)
+@export var swim_drill_dash_duration: float = 3.0
+## Drill dash attack radius
+@export var swim_drill_dash_radius: float = 1.5
 #endregion
 
 #region Exported Variables - Hurt State
@@ -199,6 +265,30 @@ var is_wall_hugging: bool = false
 var light_dash_path: Array[Node3D] = []
 var light_dash_index: int = 0
 
+# Skidding
+var skid_direction: Vector3 = Vector3.ZERO  # Direction player was moving when skid started
+
+# Rail grinding
+var current_rail: Path3D = null
+var rail_path_follow: PathFollow3D = null
+var rail_current_speed: float = 0.0
+var rail_direction: float = 1.0  # 1.0 = forward along path, -1.0 = backward
+
+# Auto path
+var auto_path: Path3D = null
+var auto_path_follow: PathFollow3D = null
+var auto_path_speed: float = 0.0
+
+# Swimming
+var is_in_water: bool = false
+var water_surface_y: float = 0.0
+var current_water_body: Area3D = null
+var swim_spin_attack_timer: float = 0.0
+var swim_drill_dash_timer: float = 0.0
+var swim_drill_dash_direction: Vector3 = Vector3.ZERO
+var swim_spin_input_history: Array[float] = []  # Timestamps of direction changes
+var swim_last_input_direction: Vector3 = Vector3.ZERO
+
 # Hurt state
 var invincibility_timer: float = 0.0
 var is_invincible: bool = false
@@ -221,6 +311,8 @@ var floor_angle: float = 0.0
 signal state_changed(new_state: State, old_state: State)
 signal jumped()
 signal double_jumped()
+signal side_jumped()
+signal skid_started()
 signal homing_attack_started(target: Node3D)
 signal homing_attack_hit(target: Node3D)
 signal butt_bounce_landed(is_powered: bool)
@@ -229,6 +321,16 @@ signal wall_hug_started()
 signal wall_jump_performed()
 signal light_dash_started()
 signal light_dash_ended()
+signal rail_grind_started(rail: Path3D)
+signal rail_grind_ended(rail: Path3D)
+signal rail_boost()
+signal auto_path_started(path: Path3D)
+signal auto_path_ended(path: Path3D)
+signal entered_water(water_body: Area3D)
+signal exited_water(water_body: Area3D)
+signal swim_spin_attack_triggered()
+signal swim_drill_dash_started()
+signal swim_drill_dash_ended()
 signal hurt(damage_source: Node3D)
 signal rings_lost(amount: int)
 #endregion
@@ -259,6 +361,8 @@ func _physics_process(delta: float) -> void:
 			_process_idle(delta)
 		State.MOVING:
 			_process_moving(delta)
+		State.SKIDDING:
+			_process_skidding(delta)
 		State.SPIN_DASH_CHARGE:
 			_process_spin_dash_charge(delta)
 		State.ROLLING:
@@ -267,6 +371,8 @@ func _physics_process(delta: float) -> void:
 			_process_airborne(delta)
 		State.AIR_ROLLING:
 			_process_air_rolling(delta)
+		State.SIDE_JUMP:
+			_process_side_jump(delta)
 		State.HOMING_ATTACK:
 			_process_homing_attack(delta)
 		State.BUTT_BOUNCE_DESCENDING:
@@ -277,8 +383,20 @@ func _physics_process(delta: float) -> void:
 			_process_wall_hug(delta)
 		State.WALL_JUMP:
 			_process_wall_jump(delta)
+		State.RAIL_GRINDING:
+			_process_rail_grinding(delta)
+		State.SWIMMING_SURFACE:
+			_process_swimming_surface(delta)
+		State.SWIMMING_SUBMERGED:
+			_process_swimming_submerged(delta)
+		State.SWIMMING_SPIN_ATTACK:
+			_process_swimming_spin_attack(delta)
+		State.SWIMMING_DRILL_DASH:
+			_process_swimming_drill_dash(delta)
 		State.LIGHT_DASH:
 			_process_light_dash(delta)
+		State.AUTO_PATH:
+			_process_auto_path(delta)
 		State.HURT:
 			_process_hurt(delta)
 	
@@ -407,6 +525,22 @@ func _exit_state(state: State) -> void:
 		State.BUTT_BOUNCE_REBOUNDING:
 			# Don't reset bounces here - only reset when landing normally
 			pass
+		State.RAIL_GRINDING:
+			var old_rail = current_rail
+			current_rail = null
+			rail_path_follow = null
+			rail_current_speed = 0.0
+			rail_grind_ended.emit(old_rail)
+		State.AUTO_PATH:
+			var old_path = auto_path
+			auto_path = null
+			auto_path_follow = null
+			auto_path_ended.emit(old_path)
+		State.SWIMMING_SPIN_ATTACK:
+			swim_spin_attack_timer = 0.0
+		State.SWIMMING_DRILL_DASH:
+			swim_drill_dash_timer = 0.0
+			swim_drill_dash_ended.emit()
 
 
 func _enter_state(state: State) -> void:
@@ -415,12 +549,20 @@ func _enter_state(state: State) -> void:
 			consecutive_bounces = 0
 		State.MOVING:
 			consecutive_bounces = 0
+		State.SKIDDING:
+			skid_direction = Vector3(velocity.x, 0, velocity.z).normalized()
+			skid_started.emit()
 		State.SPIN_DASH_CHARGE:
 			spin_dash_charge_timer = 0.0
 		State.ROLLING:
 			roll_timer = 0.0
 		State.AIRBORNE:
 			pass
+		State.SIDE_JUMP:
+			# Side jump goes perpendicular to skid direction, higher than normal jump
+			velocity.y = side_jump_velocity
+			# Maintain some horizontal momentum
+			side_jumped.emit()
 		State.HOMING_ATTACK:
 			homing_attack_timer = 0.0
 			homing_attack_started.emit(homing_target)
@@ -437,8 +579,32 @@ func _enter_state(state: State) -> void:
 			wall_jump_air_jump_timer = wall_jump_air_jump_delay
 			air_jump_available = false
 			wall_jump_performed.emit()
+		State.RAIL_GRINDING:
+			rail_current_speed = rail_base_speed
+			rail_grind_started.emit(current_rail)
+		State.SWIMMING_SURFACE:
+			# Reset spin attack input tracking
+			swim_spin_input_history.clear()
+			swim_last_input_direction = Vector3.ZERO
+		State.SWIMMING_SUBMERGED:
+			# Reset spin attack input tracking
+			swim_spin_input_history.clear()
+			swim_last_input_direction = Vector3.ZERO
+		State.SWIMMING_SPIN_ATTACK:
+			swim_spin_attack_timer = 0.0
+			swim_spin_attack_triggered.emit()
+		State.SWIMMING_DRILL_DASH:
+			swim_drill_dash_timer = 0.0
+			# Set dash direction to current facing or input direction
+			if world_input_direction.length() > 0.1:
+				swim_drill_dash_direction = world_input_direction.normalized()
+			else:
+				swim_drill_dash_direction = -global_transform.basis.z
+			swim_drill_dash_started.emit()
 		State.LIGHT_DASH:
 			light_dash_started.emit()
+		State.AUTO_PATH:
+			auto_path_started.emit(auto_path)
 #endregion
 
 
@@ -492,6 +658,15 @@ func _process_moving(delta: float) -> void:
 		_perform_jump()
 		return
 	
+	# Check for skidding (opposite input while moving fast enough)
+	var horizontal_velocity = Vector3(velocity.x, 0, velocity.z)
+	if horizontal_velocity.length() >= skid_min_speed and world_input_direction.length() > 0.1:
+		var velocity_dir = horizontal_velocity.normalized()
+		var input_dot = velocity_dir.dot(world_input_direction)
+		if input_dot <= skid_opposite_threshold:
+			_change_state(State.SKIDDING)
+			return
+	
 	# Check for return to idle
 	if world_input_direction.length() < 0.1:
 		_change_state(State.IDLE)
@@ -499,6 +674,43 @@ func _process_moving(delta: float) -> void:
 	
 	# Apply movement
 	_apply_ground_movement(delta)
+
+
+func _process_skidding(delta: float) -> void:
+	if not is_grounded:
+		_change_state(State.AIRBORNE)
+		return
+	
+	# Check for side jump (jump during skid)
+	if jump_just_pressed:
+		_change_state(State.SIDE_JUMP)
+		return
+	
+	# Apply skid deceleration
+	var horizontal = Vector3(velocity.x, 0, velocity.z)
+	horizontal = horizontal.move_toward(Vector3.ZERO, skid_deceleration * delta)
+	velocity.x = horizontal.x
+	velocity.z = horizontal.z
+	
+	# When stopped or nearly stopped, transition to moving in new direction
+	if horizontal.length() < 0.5:
+		# Now moving in the input direction
+		if world_input_direction.length() > 0.1:
+			_change_state(State.MOVING)
+		else:
+			_change_state(State.IDLE)
+		return
+	
+	# If player releases input or changes to same direction, exit skid early
+	if world_input_direction.length() < 0.1:
+		_change_state(State.MOVING)
+		return
+	
+	var velocity_dir = horizontal.normalized()
+	var input_dot = velocity_dir.dot(world_input_direction)
+	if input_dot > 0:  # No longer pressing opposite direction
+		_change_state(State.MOVING)
+		return
 
 
 func _process_spin_dash_charge(delta: float) -> void:
@@ -622,6 +834,41 @@ func _process_air_rolling(delta: float) -> void:
 	
 	# Apply air movement (reduced control while rolling)
 	_apply_air_movement(delta, 0.5)  # 50% air control while rolling
+	_apply_gravity(delta)
+
+
+func _process_side_jump(delta: float) -> void:
+	# Side jump behaves like airborne but came from a skid
+	# Check for landing
+	if is_grounded:
+		_on_land()
+		return
+	
+	# Check for Light Dash (highest priority)
+	if action_just_pressed and _check_light_dash():
+		return
+	
+	# Check for wall hug
+	if _check_wall_hug():
+		return
+	
+	# Check for Butt Bounce
+	if action_just_pressed:
+		_change_state(State.BUTT_BOUNCE_DESCENDING)
+		return
+	
+	# Check for Homing Attack or Double Jump
+	if jump_just_pressed:
+		if homing_target and _is_valid_homing_target(homing_target):
+			_change_state(State.HOMING_ATTACK)
+			return
+		elif air_jump_available and wall_jump_air_jump_timer <= 0:
+			_perform_double_jump()
+			_change_state(State.AIRBORNE)
+			return
+	
+	# Apply air movement
+	_apply_air_movement(delta)
 	_apply_gravity(delta)
 
 
@@ -774,6 +1021,202 @@ func _process_light_dash(delta: float) -> void:
 		# Check if path complete
 		if light_dash_index >= light_dash_path.size():
 			_end_light_dash()
+
+
+func _process_rail_grinding(delta: float) -> void:
+	if not current_rail or not rail_path_follow:
+		_exit_rail()
+		return
+	
+	# Check for jump off rail
+	if jump_just_pressed:
+		_jump_off_rail()
+		return
+	
+	# Check for speed boost (press CTRL)
+	if action_just_pressed:
+		rail_current_speed = minf(rail_current_speed + rail_speed_boost_increment, rail_max_speed)
+		rail_boost.emit()
+	
+	# Decay speed back toward base
+	if rail_current_speed > rail_base_speed:
+		rail_current_speed = maxf(rail_current_speed - rail_speed_decay * delta, rail_base_speed)
+	
+	# Move along the rail path
+	rail_path_follow.progress += rail_current_speed * rail_direction * delta
+	
+	# Update player position to follow the path
+	global_position = rail_path_follow.global_position
+	
+	# Rotate player to face rail direction
+	if player_model:
+		var forward = rail_path_follow.global_transform.basis.z * rail_direction
+		if forward.length() > 0.01:
+			player_model.look_at(global_position + forward, Vector3.UP)
+	
+	# Check if reached end of rail
+	if rail_path_follow.progress_ratio >= 1.0 or rail_path_follow.progress_ratio <= 0.0:
+		_exit_rail()
+
+
+func _process_auto_path(delta: float) -> void:
+	if not auto_path or not auto_path_follow:
+		_exit_auto_path()
+		return
+	
+	# No player input allowed during auto path
+	# Just move along the path
+	auto_path_follow.progress += auto_path_speed * delta
+	
+	# Update player position
+	global_position = auto_path_follow.global_position
+	
+	# Rotate player to face path direction
+	if player_model:
+		var forward = auto_path_follow.global_transform.basis.z
+		if forward.length() > 0.01:
+			player_model.look_at(global_position + forward, Vector3.UP)
+	
+	# Check if reached end of path
+	if auto_path_follow.progress_ratio >= 1.0:
+		_exit_auto_path()
+#endregion
+
+
+#region State Processing - Swimming States
+func _process_swimming_surface(delta: float) -> void:
+	# Check if we left the water
+	if not is_in_water:
+		_exit_swimming()
+		return
+	
+	# Check if we became submerged
+	if _is_submerged():
+		_change_state(State.SWIMMING_SUBMERGED)
+		return
+	
+	# Check for Light Dash (highest priority for CTRL)
+	if action_just_pressed and _check_light_dash():
+		return
+	
+	# Check for drill dash (both buttons pressed simultaneously)
+	if _check_simultaneous_press():
+		_change_state(State.SWIMMING_DRILL_DASH)
+		return
+	
+	# Check for jump out of water
+	if jump_just_pressed:
+		velocity.y = swim_surface_jump_velocity
+		is_in_water = false
+		_change_state(State.AIRBORNE)
+		return
+	
+	# Check for swimming down (submerge)
+	if action_pressed:
+		velocity.y = -swim_vertical_speed
+	else:
+		# Stay at surface level
+		velocity.y = 0
+		# Gently push back to surface if slightly below
+		var depth = water_surface_y - global_position.y
+		if depth > 0.1:
+			velocity.y = swim_vertical_speed * 0.5
+	
+	# Apply horizontal swimming movement
+	_apply_swim_movement(delta)
+	
+	# Track input for spin attack
+	_track_spin_attack_input(delta)
+
+
+func _process_swimming_submerged(delta: float) -> void:
+	# Check if we left the water
+	if not is_in_water:
+		_exit_swimming()
+		return
+	
+	# Check if we reached the surface
+	if not _is_submerged():
+		_change_state(State.SWIMMING_SURFACE)
+		return
+	
+	# Check for Light Dash (highest priority for CTRL alone)
+	if action_just_pressed and not jump_pressed and _check_light_dash():
+		return
+	
+	# Check for drill dash (both buttons pressed)
+	if _check_simultaneous_press():
+		_change_state(State.SWIMMING_DRILL_DASH)
+		return
+	
+	# Check for spin attack
+	if _check_spin_attack_triggered():
+		_change_state(State.SWIMMING_SPIN_ATTACK)
+		return
+	
+	# Vertical movement
+	if jump_pressed and not action_pressed:
+		# Swim up
+		velocity.y = swim_vertical_speed
+	elif action_pressed and not jump_pressed:
+		# Swim down
+		velocity.y = -swim_vertical_speed
+	else:
+		# Maintain current depth (no vertical movement)
+		velocity.y = 0
+	
+	# Apply horizontal swimming movement
+	_apply_swim_movement(delta)
+	
+	# Track input for spin attack
+	_track_spin_attack_input(delta)
+
+
+func _process_swimming_spin_attack(delta: float) -> void:
+	swim_spin_attack_timer += delta
+	
+	# Check if attack duration is over
+	if swim_spin_attack_timer >= swim_spin_attack_duration:
+		# Return to appropriate swimming state
+		if _is_submerged():
+			_change_state(State.SWIMMING_SUBMERGED)
+		else:
+			_change_state(State.SWIMMING_SURFACE)
+		return
+	
+	# Check if we left the water
+	if not is_in_water:
+		_exit_swimming()
+		return
+	
+	# Slow down during spin attack
+	var horizontal = Vector3(velocity.x, 0, velocity.z)
+	horizontal = horizontal.move_toward(Vector3.ZERO, swim_deceleration * 2.0 * delta)
+	velocity.x = horizontal.x
+	velocity.z = horizontal.z
+	velocity.y = 0  # Stay at current depth during spin
+
+
+func _process_swimming_drill_dash(delta: float) -> void:
+	swim_drill_dash_timer += delta
+	
+	# Check if dash duration is over
+	if swim_drill_dash_timer >= swim_drill_dash_duration:
+		_end_drill_dash()
+		return
+	
+	# Check if we left the water
+	if not is_in_water:
+		_exit_swimming()
+		return
+	
+	# Move in dash direction
+	velocity = swim_drill_dash_direction * swim_drill_dash_speed
+	
+	# Allow slight directional influence
+	if world_input_direction.length() > 0.1:
+		swim_drill_dash_direction = swim_drill_dash_direction.lerp(world_input_direction.normalized(), 0.02)
+		swim_drill_dash_direction = swim_drill_dash_direction.normalized()
 
 
 func _process_hurt(delta: float) -> void:
@@ -954,6 +1397,12 @@ func _on_butt_bounce_land() -> void:
 func _on_homing_attack_hit() -> void:
 	homing_attack_hit.emit(homing_target)
 	
+	# Check if target is a rail
+	if homing_target.is_in_group("rails") and homing_target is Path3D:
+		attach_to_rail(homing_target as Path3D, global_position)
+		homing_target = null
+		return
+	
 	# Check if target is enemy (triggers powered bounce behavior)
 	if homing_target.is_in_group("enemies") or homing_target.is_in_group("targetable"):
 		# Bounce upward
@@ -974,8 +1423,8 @@ func _on_homing_attack_hit() -> void:
 
 #region Homing Attack Targeting
 func _update_homing_reticle() -> void:
-	# Only search for targets when airborne
-	if not _is_airborne_state():
+	# Only search for targets when airborne (not swimming)
+	if not _is_airborne_state() or _is_swimming_state():
 		homing_target = null
 		if homing_reticle:
 			homing_reticle.visible = false
@@ -1000,7 +1449,7 @@ func _find_best_homing_target() -> Node3D:
 	if not camera:
 		return null
 	
-	var targets = get_tree().get_nodes_in_group("targetable") + get_tree().get_nodes_in_group("enemies")
+	var targets = get_tree().get_nodes_in_group("targetable") + get_tree().get_nodes_in_group("enemies") + get_tree().get_nodes_in_group("rails")
 	var best_target: Node3D = null
 	var best_score: float = -1.0
 	
@@ -1050,6 +1499,7 @@ func _is_airborne_state() -> bool:
 	return current_state in [
 		State.AIRBORNE,
 		State.AIR_ROLLING,
+		State.SIDE_JUMP,
 		State.BUTT_BOUNCE_DESCENDING,
 		State.BUTT_BOUNCE_REBOUNDING,
 		State.WALL_JUMP
@@ -1174,6 +1624,268 @@ func _end_light_dash() -> void:
 		velocity = Vector3.ZERO
 		_change_state(State.IDLE)
 	else:
+		_change_state(State.AIRBORNE)
+#endregion
+
+
+#region Rail Grinding
+## Call this to attach the player to a rail (from homing attack hit or jump collision)
+func attach_to_rail(rail: Path3D, entry_point: Vector3 = Vector3.ZERO) -> void:
+	if not rail:
+		return
+	
+	current_rail = rail
+	
+	# Create or get PathFollow3D
+	rail_path_follow = PathFollow3D.new()
+	rail_path_follow.loop = false
+	rail_path_follow.rotation_mode = PathFollow3D.ROTATION_ORIENTED
+	rail.add_child(rail_path_follow)
+	
+	# Find closest point on rail to entry point
+	var curve = rail.curve
+	if curve and entry_point != Vector3.ZERO:
+		var closest_offset = curve.get_closest_offset(rail.to_local(entry_point))
+		rail_path_follow.progress = closest_offset
+	
+	# Determine rail direction based on player velocity
+	var horizontal_vel = Vector3(velocity.x, 0, velocity.z)
+	if horizontal_vel.length() > 0.1:
+		var path_forward = rail_path_follow.global_transform.basis.z
+		rail_direction = 1.0 if horizontal_vel.dot(path_forward) >= 0 else -1.0
+	else:
+		rail_direction = 1.0
+	
+	velocity = Vector3.ZERO
+	_change_state(State.RAIL_GRINDING)
+
+
+func _jump_off_rail() -> void:
+	velocity = Vector3.ZERO
+	velocity.y = rail_jump_velocity
+	
+	# Add some horizontal velocity in the rail direction
+	if rail_path_follow:
+		var forward = rail_path_follow.global_transform.basis.z * rail_direction
+		velocity += forward * rail_current_speed * 0.5
+	
+	_exit_rail()
+	
+	# Transition to airborne
+	air_jump_available = true
+	_change_state(State.AIRBORNE)
+
+
+func _exit_rail() -> void:
+	if rail_path_follow:
+		rail_path_follow.queue_free()
+		rail_path_follow = null
+	
+	# State exit will handle the rest via _exit_state
+	if current_state == State.RAIL_GRINDING:
+		if is_grounded:
+			_change_state(State.IDLE)
+		else:
+			air_jump_available = true
+			_change_state(State.AIRBORNE)
+#endregion
+
+
+#region Auto Path
+## Call this to put the player on an automatic path sequence
+func start_auto_path(path: Path3D, speed: float = -1.0, start_from_beginning: bool = true) -> void:
+	if not path:
+		return
+	
+	auto_path = path
+	auto_path_speed = speed if speed > 0 else auto_path_default_speed
+	
+	# Create PathFollow3D
+	auto_path_follow = PathFollow3D.new()
+	auto_path_follow.loop = false
+	auto_path_follow.rotation_mode = PathFollow3D.ROTATION_ORIENTED
+	path.add_child(auto_path_follow)
+	
+	if start_from_beginning:
+		auto_path_follow.progress = 0.0
+	else:
+		# Start from closest point to player
+		var curve = path.curve
+		if curve:
+			var closest_offset = curve.get_closest_offset(path.to_local(global_position))
+			auto_path_follow.progress = closest_offset
+	
+	velocity = Vector3.ZERO
+	_change_state(State.AUTO_PATH)
+
+
+func _exit_auto_path() -> void:
+	if auto_path_follow:
+		auto_path_follow.queue_free()
+		auto_path_follow = null
+	
+	# Determine exit state based on environment
+	if current_state == State.AUTO_PATH:
+		# Give player a small forward velocity
+		if player_model:
+			velocity = -player_model.global_transform.basis.z * auto_path_speed * 0.3
+		
+		if is_grounded:
+			if velocity.length() > 0.5:
+				_change_state(State.MOVING)
+			else:
+				_change_state(State.IDLE)
+		else:
+			air_jump_available = true
+			_change_state(State.AIRBORNE)
+
+
+## Call this to force exit from auto path (e.g., player died)
+func force_exit_auto_path() -> void:
+	_exit_auto_path()
+#endregion
+
+
+#region Swimming
+## Call this when player enters a water body
+func enter_water(water_body: Area3D, surface_y: float) -> void:
+	is_in_water = true
+	current_water_body = water_body
+	water_surface_y = surface_y
+	entered_water.emit(water_body)
+	
+	# Determine initial swimming state based on submersion
+	if _is_submerged():
+		_change_state(State.SWIMMING_SUBMERGED)
+	else:
+		_change_state(State.SWIMMING_SURFACE)
+
+
+## Call this when player exits a water body
+func exit_water() -> void:
+	var old_water = current_water_body
+	is_in_water = false
+	current_water_body = null
+	exited_water.emit(old_water)
+	
+	# Don't change state here - let _exit_swimming handle it
+
+
+func _is_submerged() -> bool:
+	if not is_in_water:
+		return false
+	
+	# Calculate how much of the player is underwater
+	# Assuming player height of ~2 units, adjust as needed
+	var player_height = 2.0
+	var player_top = global_position.y + player_height * 0.5
+	var depth = water_surface_y - global_position.y
+	var submersion_ratio = clampf(depth / player_height, 0.0, 1.0)
+	
+	return submersion_ratio >= swim_submersion_threshold
+
+
+func _is_swimming_state() -> bool:
+	return current_state in [
+		State.SWIMMING_SURFACE,
+		State.SWIMMING_SUBMERGED,
+		State.SWIMMING_SPIN_ATTACK,
+		State.SWIMMING_DRILL_DASH
+	]
+
+
+func _apply_swim_movement(delta: float) -> void:
+	var target_velocity = Vector3.ZERO
+	
+	if world_input_direction.length() > 0.1:
+		target_velocity = world_input_direction * swim_max_speed
+	
+	# Smoothly accelerate toward target
+	var horizontal = Vector3(velocity.x, 0, velocity.z)
+	if target_velocity.length() > 0.1:
+		horizontal = horizontal.move_toward(target_velocity, swim_acceleration * delta)
+	else:
+		horizontal = horizontal.move_toward(Vector3.ZERO, swim_deceleration * delta)
+	
+	velocity.x = horizontal.x
+	velocity.z = horizontal.z
+
+
+func _track_spin_attack_input(delta: float) -> void:
+	# Clean up old inputs outside the time window
+	var current_time = Time.get_ticks_msec() / 1000.0
+	while swim_spin_input_history.size() > 0 and current_time - swim_spin_input_history[0] > swim_spin_attack_input_window:
+		swim_spin_input_history.pop_front()
+	
+	# Check for direction change
+	if world_input_direction.length() > 0.1:
+		var current_dir = world_input_direction.normalized()
+		
+		if swim_last_input_direction.length() > 0.1:
+			# Check if direction is roughly opposite (dot product < -0.5)
+			var dot = current_dir.dot(swim_last_input_direction)
+			if dot < -0.5:
+				# Direction changed to opposite, record it
+				swim_spin_input_history.append(current_time)
+		
+		swim_last_input_direction = current_dir
+	else:
+		swim_last_input_direction = Vector3.ZERO
+
+
+func _check_spin_attack_triggered() -> bool:
+	return swim_spin_input_history.size() >= swim_spin_attack_input_count
+
+
+var _last_jump_press_time: float = 0.0
+var _last_action_press_time: float = 0.0
+const SIMULTANEOUS_PRESS_WINDOW: float = 0.1  # 100ms window for "simultaneous"
+
+func _check_simultaneous_press() -> bool:
+	var current_time = Time.get_ticks_msec() / 1000.0
+	
+	if jump_just_pressed:
+		_last_jump_press_time = current_time
+	if action_just_pressed:
+		_last_action_press_time = current_time
+	
+	# Check if both were pressed within the window
+	if jump_pressed and action_pressed:
+		var time_diff = absf(_last_jump_press_time - _last_action_press_time)
+		if time_diff <= SIMULTANEOUS_PRESS_WINDOW:
+			# Reset to prevent retriggering
+			_last_jump_press_time = 0.0
+			_last_action_press_time = 0.0
+			return true
+	
+	return false
+
+
+func _end_drill_dash() -> void:
+	# Return to appropriate swimming state
+	if is_in_water:
+		if _is_submerged():
+			_change_state(State.SWIMMING_SUBMERGED)
+		else:
+			_change_state(State.SWIMMING_SURFACE)
+	else:
+		_exit_swimming()
+
+
+func _exit_swimming() -> void:
+	# Clear swimming state tracking
+	swim_spin_input_history.clear()
+	swim_last_input_direction = Vector3.ZERO
+	
+	# Transition to appropriate non-swimming state
+	if is_grounded:
+		var horizontal = Vector3(velocity.x, 0, velocity.z)
+		if horizontal.length() > 0.5:
+			_change_state(State.MOVING)
+		else:
+			_change_state(State.IDLE)
+	else:
+		air_jump_available = true
 		_change_state(State.AIRBORNE)
 #endregion
 
