@@ -1,10 +1,6 @@
-[gd_scene load_steps=6 format=3 uid="uid://cldvt7hyn7ouo"]
+[gd_scene load_steps=4 format=3 uid="uid://cldvt7hyn7ouo"]
 
-[ext_resource type="Script" uid="uid://dpifywcy4yvjl" path="res://scripts/player.gd" id="1_2venv"]
-
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_paw1w"]
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_j6w7d"]
+[ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="1_2venv"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2venv"]
 size = Vector3(6.975647, 1, 8.679199)
@@ -13,15 +9,8 @@ size = Vector3(6.975647, 1, 8.679199)
 
 [node name="TestLevel" type="Node3D"]
 
-[node name="Player" type="CharacterBody3D" parent="."]
+[node name="Player_1-4" parent="." instance=ExtResource("1_2venv")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-script = ExtResource("1_2venv")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
-shape = SubResource("CapsuleShape3D_paw1w")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
-mesh = SubResource("CapsuleMesh_j6w7d")
 
 [node name="Camera3D" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6.250964)

@@ -18,6 +18,7 @@ var _grid_visible_check: CheckBox
 var _grid_visualizer: XtremeGridVisualizer
 var _grid_lines_mesh: MeshInstance3D
 var _selection_box_mesh: MeshInstance3D
+var _brush_preview_mesh: MeshInstance3D
 
 # State
 var _current_level: XtremeLevelData
@@ -34,6 +35,7 @@ var _editing_enabled: bool = false
 var _selection_start: Vector3i = Vector3i(-1, -1, -1)
 var _selection_end: Vector3i = Vector3i(-1, -1, -1)
 var _has_selection: bool = false
+var _awaiting_second_click: bool = false
 
 func _get_plugin_name() -> String:
 	return PLUGIN_NAME
@@ -69,6 +71,9 @@ func _cleanup_visualizer() -> void:
 	if _selection_box_mesh and is_instance_valid(_selection_box_mesh):
 		_selection_box_mesh.queue_free()
 		_selection_box_mesh = null
+	if _brush_preview_mesh and is_instance_valid(_brush_preview_mesh):
+		_brush_preview_mesh.queue_free()
+		_brush_preview_mesh = null
 
 func _register_custom_types() -> void:
 	add_custom_type("XtremeGridSettings", "Resource",
@@ -124,30 +129,42 @@ func _create_default_palette() -> void:
 			_current_palette.tiles.append(tile)
 
 func _create_editor_dock() -> void:
+	# Main container with scroll
 	_main_dock = VBoxContainer.new()
 	_main_dock.name = "XtremeLevelEditorDock"
-	_main_dock.custom_minimum_size = Vector2(250, 400)
+	_main_dock.custom_minimum_size = Vector2(250, 300)
 	
-	# Header
+	# Header (outside scroll)
 	var header := Label.new()
 	header.text = "Xtreme Level Editor"
 	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	header.add_theme_font_size_override("font_size", 16)
 	_main_dock.add_child(header)
 	
-	_main_dock.add_child(HSeparator.new())
+	# Scroll container for all content
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_main_dock.add_child(scroll)
+	
+	# Content inside scroll
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content)
+	
+	content.add_child(HSeparator.new())
 	
 	# ===== EDITING TOGGLE =====
 	var edit_toggle := CheckBox.new()
 	edit_toggle.name = "EditingEnabled"
 	edit_toggle.text = "Enable Level Editing"
 	edit_toggle.toggled.connect(_on_editing_toggled)
-	_main_dock.add_child(edit_toggle)
+	content.add_child(edit_toggle)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== LEVEL MANAGEMENT =====
-	_main_dock.add_child(_make_label("Level"))
+	content.add_child(_make_label("Level"))
 	
 	var level_buttons := HBoxContainer.new()
 	
@@ -166,23 +183,23 @@ func _create_editor_dock() -> void:
 	save_btn.pressed.connect(_on_save_level)
 	level_buttons.add_child(save_btn)
 	
-	_main_dock.add_child(level_buttons)
+	content.add_child(level_buttons)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== TILE SELECTOR =====
-	_main_dock.add_child(_make_label("Selected Tile"))
+	content.add_child(_make_label("Selected Tile"))
 	
 	_tile_selector = OptionButton.new()
 	_tile_selector.name = "TileSelector"
 	_update_tile_selector()
 	_tile_selector.item_selected.connect(_on_tile_selected)
-	_main_dock.add_child(_tile_selector)
+	content.add_child(_tile_selector)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== EDITING TOOLS =====
-	_main_dock.add_child(_make_label("Tool"))
+	content.add_child(_make_label("Tool"))
 	
 	var tool_container := HBoxContainer.new()
 	var tool_group := ButtonGroup.new()
@@ -206,14 +223,14 @@ func _create_editor_dock() -> void:
 	select_btn.text = "Select"
 	select_btn.toggle_mode = true
 	select_btn.button_group = tool_group
-	select_btn.pressed.connect(func(): _edit_mode = 2; _set_status("Tool: Select - Click two corners"))
+	select_btn.pressed.connect(func(): _edit_mode = 2; _set_status("Tool: Select - Click first corner"))
 	tool_container.add_child(select_btn)
 	
-	_main_dock.add_child(tool_container)
+	content.add_child(tool_container)
 	
 	# ===== Y LEVEL (HEIGHT) =====
 	var y_container := HBoxContainer.new()
-	y_container.add_child(_make_label("Y Level (Height): "))
+	y_container.add_child(_make_label("Y Level: "))
 	
 	_y_level_spinbox = SpinBox.new()
 	_y_level_spinbox.name = "YLevel"
@@ -224,11 +241,11 @@ func _create_editor_dock() -> void:
 	_y_level_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	y_container.add_child(_y_level_spinbox)
 	
-	_main_dock.add_child(y_container)
+	content.add_child(y_container)
 	
 	# ===== BRUSH SIZE =====
 	var brush_container := HBoxContainer.new()
-	brush_container.add_child(_make_label("Brush Size: "))
+	brush_container.add_child(_make_label("Brush: "))
 	
 	_brush_size_spinbox = SpinBox.new()
 	_brush_size_spinbox.name = "BrushSize"
@@ -239,18 +256,18 @@ func _create_editor_dock() -> void:
 	_brush_size_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	brush_container.add_child(_brush_size_spinbox)
 	
-	_main_dock.add_child(brush_container)
+	content.add_child(brush_container)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== SELECTION OPERATIONS =====
-	_main_dock.add_child(_make_label("Selection Operations"))
+	content.add_child(_make_label("Selection"))
 	
 	var selection_info := Label.new()
 	selection_info.name = "SelectionInfo"
 	selection_info.text = "No selection"
 	selection_info.add_theme_color_override("font_color", Color.GRAY)
-	_main_dock.add_child(selection_info)
+	content.add_child(selection_info)
 	
 	var selection_buttons1 := HBoxContainer.new()
 	
@@ -264,7 +281,7 @@ func _create_editor_dock() -> void:
 	load_chunk_btn.pressed.connect(_on_load_chunk)
 	selection_buttons1.add_child(load_chunk_btn)
 	
-	_main_dock.add_child(selection_buttons1)
+	content.add_child(selection_buttons1)
 	
 	var selection_buttons2 := HBoxContainer.new()
 	
@@ -283,27 +300,25 @@ func _create_editor_dock() -> void:
 	deselect_btn.pressed.connect(_clear_selection)
 	selection_buttons2.add_child(deselect_btn)
 	
-	_main_dock.add_child(selection_buttons2)
+	content.add_child(selection_buttons2)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
-	# ===== GRID DISPLAY =====
-	_main_dock.add_child(_make_label("Display"))
-	
+	# ===== DISPLAY =====
 	_grid_visible_check = CheckBox.new()
 	_grid_visible_check.name = "ShowGrid"
 	_grid_visible_check.text = "Show 3D Grid"
 	_grid_visible_check.button_pressed = true
 	_grid_visible_check.toggled.connect(_on_grid_visible_toggled)
-	_main_dock.add_child(_grid_visible_check)
+	content.add_child(_grid_visible_check)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== CELL SIZE =====
-	_main_dock.add_child(_make_label("Cell Size"))
+	content.add_child(_make_label("Cell Size"))
 	
 	var cell_grid := GridContainer.new()
-	cell_grid.columns = 2
+	cell_grid.columns = 4
 	
 	cell_grid.add_child(_make_label("X:"))
 	var cell_x := SpinBox.new()
@@ -312,6 +327,7 @@ func _create_editor_dock() -> void:
 	cell_x.max_value = 100.0
 	cell_x.step = 0.1
 	cell_x.value = _grid_settings.cell_size_x
+	cell_x.custom_minimum_size.x = 60
 	cell_x.value_changed.connect(func(v): _grid_settings.cell_size_x = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_x)
 	
@@ -322,6 +338,7 @@ func _create_editor_dock() -> void:
 	cell_y.max_value = 100.0
 	cell_y.step = 0.1
 	cell_y.value = _grid_settings.cell_size_y
+	cell_y.custom_minimum_size.x = 60
 	cell_y.value_changed.connect(func(v): _grid_settings.cell_size_y = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_y)
 	
@@ -332,61 +349,65 @@ func _create_editor_dock() -> void:
 	cell_z.max_value = 100.0
 	cell_z.step = 0.1
 	cell_z.value = _grid_settings.cell_size_z
+	cell_z.custom_minimum_size.x = 60
 	cell_z.value_changed.connect(func(v): _grid_settings.cell_size_z = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_z)
 	
-	_main_dock.add_child(cell_grid)
+	content.add_child(cell_grid)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== LEVEL SIZE =====
-	_main_dock.add_child(_make_label("Level Size (cells)"))
+	content.add_child(_make_label("Level Size (cells)"))
 	
 	var size_grid := GridContainer.new()
-	size_grid.columns = 2
+	size_grid.columns = 4
 	
-	size_grid.add_child(_make_label("Width:"))
+	size_grid.add_child(_make_label("W:"))
 	var size_x := SpinBox.new()
 	size_x.name = "LevelSizeX"
 	size_x.min_value = 1
 	size_x.max_value = 500
 	size_x.value = 64
+	size_x.custom_minimum_size.x = 60
 	size_x.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_x)
 	
-	size_grid.add_child(_make_label("Height:"))
+	size_grid.add_child(_make_label("H:"))
 	var size_y := SpinBox.new()
 	size_y.name = "LevelSizeY"
 	size_y.min_value = 1
 	size_y.max_value = 500
 	size_y.value = 32
+	size_y.custom_minimum_size.x = 60
 	size_y.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_y)
 	
-	size_grid.add_child(_make_label("Depth:"))
+	size_grid.add_child(_make_label("D:"))
 	var size_z := SpinBox.new()
 	size_z.name = "LevelSizeZ"
 	size_z.min_value = 1
 	size_z.max_value = 500
 	size_z.value = 64
+	size_z.custom_minimum_size.x = 60
 	size_z.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_z)
 	
-	_main_dock.add_child(size_grid)
+	content.add_child(size_grid)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== CURVED WORLD =====
-	_main_dock.add_child(_make_label("Curved World Preview"))
+	content.add_child(_make_label("Curved World"))
 	
 	var curve_check := CheckBox.new()
 	curve_check.name = "CurveEnabled"
 	curve_check.text = "Enable Preview"
 	curve_check.toggled.connect(_on_curve_toggled)
-	_main_dock.add_child(curve_check)
+	content.add_child(curve_check)
 	
 	var intensity_hbox := HBoxContainer.new()
-	intensity_hbox.add_child(_make_label("Intensity:"))
+	intensity_hbox.add_child(_make_label("Curve:"))
 	var intensity := HSlider.new()
 	intensity.name = "CurveIntensity"
 	intensity.min_value = 0.0
@@ -396,30 +417,27 @@ func _create_editor_dock() -> void:
 	intensity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	intensity.value_changed.connect(_on_curve_intensity_changed)
 	intensity_hbox.add_child(intensity)
-	_main_dock.add_child(intensity_hbox)
+	content.add_child(intensity_hbox)
 	
-	_main_dock.add_child(HSeparator.new())
+	content.add_child(HSeparator.new())
 	
 	# ===== EXPORT =====
-	_main_dock.add_child(_make_label("Export"))
+	content.add_child(_make_label("Export"))
 	
 	var export_curve := CheckBox.new()
 	export_curve.name = "ExportWithCurve"
 	export_curve.text = "Apply Curved Shader"
 	export_curve.button_pressed = true
-	_main_dock.add_child(export_curve)
+	content.add_child(export_curve)
 	
 	var export_btn := Button.new()
 	export_btn.text = "Export Level"
 	export_btn.pressed.connect(_on_export_level)
-	_main_dock.add_child(export_btn)
+	content.add_child(export_btn)
 	
-	# Spacer
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_main_dock.add_child(spacer)
+	content.add_child(HSeparator.new())
 	
-	# Status
+	# Status (outside scroll, at bottom)
 	var status := Label.new()
 	status.name = "Status"
 	status.text = "Check 'Enable Level Editing' to start"
@@ -454,9 +472,9 @@ func _on_tile_selected(index: int) -> void:
 func _on_editing_toggled(enabled: bool) -> void:
 	_editing_enabled = enabled
 	if enabled:
-		_set_status("Editing ENABLED - Click 'New' or 'Load'")
+		_set_status("Editing ON - Click 'New' or 'Load'")
 	else:
-		_set_status("Editing disabled")
+		_set_status("Editing OFF")
 
 func _on_y_level_changed(value: float) -> void:
 	_current_y_level = int(value)
@@ -513,8 +531,11 @@ func _clear_selection() -> void:
 	_selection_start = Vector3i(-1, -1, -1)
 	_selection_end = Vector3i(-1, -1, -1)
 	_has_selection = false
+	_awaiting_second_click = false
 	_update_selection_info()
 	_update_selection_visual()
+	if _edit_mode == 2:
+		_set_status("Tool: Select - Click first corner")
 
 func _update_selection_visual() -> void:
 	if not _selection_box_mesh or not _grid_settings:
@@ -541,12 +562,41 @@ func _update_selection_visual() -> void:
 	var center := (world_min + world_max) / 2.0
 	var size := world_max - world_min
 	
-	# Create box mesh
 	var box := BoxMesh.new()
 	box.size = size
 	_selection_box_mesh.mesh = box
 	_selection_box_mesh.position = center
 	_selection_box_mesh.visible = true
+
+func _update_brush_preview(center_pos: Vector3i) -> void:
+	if not _brush_preview_mesh or not _grid_settings:
+		return
+	
+	# Only show brush preview in paint/erase mode
+	if _edit_mode == 2:  # Select mode
+		_brush_preview_mesh.visible = false
+		return
+	
+	var cell := _grid_settings.get_cell_size()
+	var half := _brush_size / 2
+	
+	# Calculate brush bounds (centered on cursor)
+	var min_x := center_pos.x - half
+	var min_z := center_pos.z - half
+	var max_x := min_x + _brush_size
+	var max_z := min_z + _brush_size
+	
+	var world_min := Vector3(min_x * cell.x, _current_y_level * cell.y, min_z * cell.z)
+	var world_max := Vector3(max_x * cell.x, (_current_y_level + 1) * cell.y, max_z * cell.z)
+	
+	var center := (world_min + world_max) / 2.0
+	var size := world_max - world_min
+	
+	var box := BoxMesh.new()
+	box.size = size
+	_brush_preview_mesh.mesh = box
+	_brush_preview_mesh.position = center
+	_brush_preview_mesh.visible = true
 
 func _on_save_chunk() -> void:
 	if not _has_selection or not _current_level:
@@ -592,7 +642,6 @@ func _load_chunk_file(path: String) -> void:
 	
 	var chunk := res as XtremeLevelChunk
 	
-	# Determine placement position
 	var place_pos := Vector3i(0, _current_y_level, 0)
 	if _has_selection:
 		place_pos = Vector3i(
@@ -684,7 +733,7 @@ func _on_new_level() -> void:
 	
 	_clear_selection()
 	_create_or_update_visualizer()
-	_set_status("New level created - Paint tiles!")
+	_set_status("New level - Start painting!")
 
 func _on_load_level() -> void:
 	if not _editing_enabled:
@@ -717,7 +766,7 @@ func _load_level_file(path: String) -> void:
 		_create_or_update_visualizer()
 		_set_status("Loaded: %s" % path.get_file())
 	else:
-		_set_status("Error: Not a valid level file")
+		_set_status("Error: Invalid level file")
 
 func _on_save_level() -> void:
 	if not _current_level:
@@ -799,7 +848,6 @@ func _create_or_update_visualizer() -> void:
 	
 	_cleanup_visualizer()
 	
-	# Create visualizer
 	_grid_visualizer = XtremeGridVisualizer.new()
 	_grid_visualizer.name = "XtremeGridVisualizer"
 	_grid_visualizer.grid_settings = _grid_settings
@@ -809,11 +857,9 @@ func _create_or_update_visualizer() -> void:
 	scene_root.add_child(_grid_visualizer)
 	_grid_visualizer.owner = scene_root
 	
-	# Create grid lines
 	_create_grid_lines(scene_root)
-	
-	# Create selection box
 	_create_selection_box(scene_root)
+	_create_brush_preview(scene_root)
 
 func _create_grid_lines(parent: Node) -> void:
 	_grid_lines_mesh = MeshInstance3D.new()
@@ -844,6 +890,20 @@ func _create_selection_box(parent: Node) -> void:
 	parent.add_child(_selection_box_mesh)
 	_selection_box_mesh.owner = parent
 
+func _create_brush_preview(parent: Node) -> void:
+	_brush_preview_mesh = MeshInstance3D.new()
+	_brush_preview_mesh.name = "XtremeBrushPreview"
+	
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.0, 1.0, 0.5, 0.25)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_brush_preview_mesh.material_override = mat
+	_brush_preview_mesh.visible = false
+	
+	parent.add_child(_brush_preview_mesh)
+	_brush_preview_mesh.owner = parent
+
 func _update_grid_lines() -> void:
 	if not _grid_lines_mesh or not _current_level or not _grid_settings:
 		return
@@ -857,13 +917,11 @@ func _update_grid_lines() -> void:
 	var width := _current_level.size_x
 	var depth := _current_level.size_z
 	
-	# X lines
 	for z in range(depth + 1):
 		var z_pos := z * cell.z
 		im.surface_add_vertex(Vector3(0, y_pos, z_pos))
 		im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
 	
-	# Z lines
 	for x in range(width + 1):
 		var x_pos := x * cell.x
 		im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
@@ -901,8 +959,10 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		var dir := camera.project_ray_normal(mm.position)
 		var pos := _raycast_grid(from, dir)
 		
-		if pos.x >= 0 and _grid_visualizer:
-			_grid_visualizer.set_hover_position(pos)
+		if pos.x >= 0:
+			if _grid_visualizer:
+				_grid_visualizer.set_hover_position(pos)
+			_update_brush_preview(pos)
 	
 	return AFTER_GUI_INPUT_PASS
 
@@ -956,7 +1016,7 @@ func _paint_at(center_pos: Vector3i) -> void:
 			_grid_visualizer.update_tile(pos)
 			placed += 1
 	
-	_set_status("Painted %d tiles at Y=%d" % [placed, _current_y_level])
+	_set_status("Painted %d at Y=%d" % [placed, _current_y_level])
 
 func _erase_at(center_pos: Vector3i) -> void:
 	var half := _brush_size / 2
@@ -979,19 +1039,23 @@ func _erase_at(center_pos: Vector3i) -> void:
 			_grid_visualizer.update_tile(pos)
 			erased += 1
 	
-	_set_status("Erased %d tiles at Y=%d" % [erased, _current_y_level])
+	_set_status("Erased %d at Y=%d" % [erased, _current_y_level])
 
 func _select_at(pos: Vector3i) -> void:
-	if not _has_selection or _selection_end.x >= 0:
-		# Start new selection
+	if not _awaiting_second_click:
+		# First click - set start
 		_selection_start = pos
-		_selection_end = Vector3i(-1, -1, -1)
+		_selection_end = pos
 		_has_selection = false
-		_set_status("Selection start: %s - Click second corner" % pos)
+		_awaiting_second_click = true
+		_update_selection_info()
+		_update_selection_visual()
+		_set_status("First corner: %s - Click second corner" % pos)
 	else:
-		# Complete selection
+		# Second click - complete selection
 		_selection_end = pos
 		_has_selection = true
+		_awaiting_second_click = false
 		_update_selection_info()
 		_update_selection_visual()
 		
@@ -1000,8 +1064,4 @@ func _select_at(pos: Vector3i) -> void:
 			absi(_selection_end.y - _selection_start.y) + 1,
 			absi(_selection_end.z - _selection_start.z) + 1
 		)
-		_set_status("Selected region: %dx%dx%d" % [size.x, size.y, size.z])
-	
-	# Toggle between start and awaiting end
-	if _selection_start.x >= 0 and _selection_end.x < 0:
-		_selection_end = Vector3i(-2, -2, -2)  # Marker that we're waiting for second click
+		_set_status("Selected: %dx%dx%d" % [size.x, size.y, size.z])
