@@ -2,7 +2,8 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
 
 // Curved World Shader for Sonic Xtreme-style effect
-// Applies vertex displacement to curve the world around a center point
+// Applies vertex displacement to curve the world AWAY from the camera
+// The world curves UP at the edges, creating the "standing on a planet" look
 
 group_uniforms curvature;
 // The center point of the curvature (usually player/camera position)
@@ -52,9 +53,9 @@ void vertex() {
 			distance_sq = horizontal_offset.y * horizontal_offset.y;
 		}
 		
-		// Calculate vertical displacement (parabolic falloff)
-		// The further from center, the more the vertex drops
-		float displacement = -curve_intensity * distance_sq;
+		// Calculate vertical displacement (parabolic curve)
+		// POSITIVE displacement = world curves UP and away from camera (Sonic Xtreme style)
+		float displacement = curve_intensity * distance_sq;
 		
 		// Apply distance falloff to prevent extreme curvature at far distances
 		float distance_factor = clamp(1.0 - sqrt(distance_sq) / curve_max_distance, 0.0, 1.0);

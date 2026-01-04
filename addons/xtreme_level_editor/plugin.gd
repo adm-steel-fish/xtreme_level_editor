@@ -13,19 +13,21 @@ var _tile_selector: OptionButton
 var _y_level_spinbox: SpinBox
 var _brush_size_spinbox: SpinBox
 var _grid_visible_check: CheckBox
+var _context_menu: PopupMenu
 
 # Scene elements
 var _grid_visualizer: XtremeGridVisualizer
 var _grid_lines_mesh: MeshInstance3D
 var _selection_box_mesh: MeshInstance3D
 var _brush_preview_mesh: MeshInstance3D
+var _rect_preview_mesh: MeshInstance3D
 
 # State
 var _current_level: XtremeLevelData
 var _current_palette: XtremeTilePalette
 var _grid_settings: XtremeGridSettings
 var _selected_tile_id: StringName = &"solid"
-var _edit_mode: int = 0  # 0=paint, 1=erase, 2=select
+var _edit_mode: int = 0  # 0=paint, 1=erase, 2=select, 3=rect_fill, 4=bucket_fill
 var _current_y_level: int = 0
 var _brush_size: int = 1
 var _is_plugin_active: bool = false
@@ -37,6 +39,13 @@ var _selection_end: Vector3i = Vector3i(-1, -1, -1)
 var _has_selection: bool = false
 var _awaiting_second_click: bool = false
 
+# Rect fill drag state
+var _rect_drag_start: Vector3i = Vector3i(-1, -1, -1)
+var _rect_dragging: bool = false
+
+# Last known mouse position for context menu
+var _last_mouse_pos: Vector2 = Vector2.ZERO
+
 func _get_plugin_name() -> String:
 	return PLUGIN_NAME
 
@@ -45,6 +54,7 @@ func _enter_tree() -> void:
 	_create_default_palette()
 	_register_custom_types()
 	_create_editor_dock()
+	_create_context_menu()
 	_is_plugin_active = true
 	print("[%s] Plugin initialized" % PLUGIN_NAME)
 
@@ -56,6 +66,10 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_main_dock)
 		_main_dock.queue_free()
 		_main_dock = null
+	
+	if _context_menu:
+		_context_menu.queue_free()
+		_context_menu = null
 	
 	_cleanup_visualizer()
 	_unregister_custom_types()
@@ -74,6 +88,9 @@ func _cleanup_visualizer() -> void:
 	if _brush_preview_mesh and is_instance_valid(_brush_preview_mesh):
 		_brush_preview_mesh.queue_free()
 		_brush_preview_mesh = null
+	if _rect_preview_mesh and is_instance_valid(_rect_preview_mesh):
+		_rect_preview_mesh.queue_free()
+		_rect_preview_mesh = null
 
 func _register_custom_types() -> void:
 	add_custom_type("XtremeGridSettings", "Resource",
@@ -128,26 +145,111 @@ func _create_default_palette() -> void:
 			tile.editor_color = data[1]
 			_current_palette.tiles.append(tile)
 
+func _create_context_menu() -> void:
+	_context_menu = PopupMenu.new()
+	_context_menu.name = "XtremeContextMenu"
+	
+	# Tools submenu
+	_context_menu.add_item("Paint", 0)
+	_context_menu.add_item("Erase", 1)
+	_context_menu.add_item("Select Region", 2)
+	_context_menu.add_item("Rect Fill (Drag)", 3)
+	_context_menu.add_item("Bucket Fill", 4)
+	_context_menu.add_separator()
+	
+	# Quick actions
+	_context_menu.add_item("Fill Selection", 10)
+	_context_menu.add_item("Clear Selection", 11)
+	_context_menu.add_item("Deselect", 12)
+	_context_menu.add_separator()
+	
+	# Layer controls
+	_context_menu.add_item("Layer Up (Scroll Up)", 20)
+	_context_menu.add_item("Layer Down (Scroll Down)", 21)
+	
+	_context_menu.id_pressed.connect(_on_context_menu_selected)
+	EditorInterface.get_base_control().add_child(_context_menu)
+
+func _on_context_menu_selected(id: int) -> void:
+	match id:
+		0:  # Paint
+			_edit_mode = 0
+			_set_status("Tool: Paint")
+			_update_tool_buttons()
+		1:  # Erase
+			_edit_mode = 1
+			_set_status("Tool: Erase")
+			_update_tool_buttons()
+		2:  # Select
+			_edit_mode = 2
+			_clear_selection()
+			_set_status("Tool: Select - Click first corner")
+			_update_tool_buttons()
+		3:  # Rect Fill
+			_edit_mode = 3
+			_set_status("Tool: Rect Fill - Click and drag")
+			_update_tool_buttons()
+		4:  # Bucket Fill
+			_edit_mode = 4
+			_set_status("Tool: Bucket Fill - Click empty area")
+			_update_tool_buttons()
+		10:  # Fill Selection
+			_on_fill_selection()
+		11:  # Clear Selection
+			_on_clear_selection_tiles()
+		12:  # Deselect
+			_clear_selection()
+		20:  # Layer Up
+			_change_y_level(1)
+		21:  # Layer Down
+			_change_y_level(-1)
+
+func _update_tool_buttons() -> void:
+	# Update the dock buttons to match current tool
+	if not _main_dock:
+		return
+	var paint_btn := _main_dock.find_child("PaintBtn", true, false) as Button
+	var erase_btn := _main_dock.find_child("EraseBtn", true, false) as Button
+	var select_btn := _main_dock.find_child("SelectBtn", true, false) as Button
+	var rect_btn := _main_dock.find_child("RectFillBtn", true, false) as Button
+	var bucket_btn := _main_dock.find_child("BucketBtn", true, false) as Button
+	
+	if paint_btn: paint_btn.button_pressed = (_edit_mode == 0)
+	if erase_btn: erase_btn.button_pressed = (_edit_mode == 1)
+	if select_btn: select_btn.button_pressed = (_edit_mode == 2)
+	if rect_btn: rect_btn.button_pressed = (_edit_mode == 3)
+	if bucket_btn: bucket_btn.button_pressed = (_edit_mode == 4)
+
+func _change_y_level(delta: int) -> void:
+	if not _current_level:
+		return
+	var new_level := clampi(_current_y_level + delta, 0, _current_level.size_y - 1)
+	if new_level != _current_y_level:
+		_current_y_level = new_level
+		if _y_level_spinbox:
+			_y_level_spinbox.value = _current_y_level
+		_update_grid_lines()
+		_update_selection_visual()
+		_set_status("Y Level: %d" % _current_y_level)
+
 func _create_editor_dock() -> void:
-	# Main container with scroll
 	_main_dock = VBoxContainer.new()
 	_main_dock.name = "XtremeLevelEditorDock"
 	_main_dock.custom_minimum_size = Vector2(250, 300)
 	
-	# Header (outside scroll)
+	# Header
 	var header := Label.new()
 	header.text = "Xtreme Level Editor"
 	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	header.add_theme_font_size_override("font_size", 16)
 	_main_dock.add_child(header)
 	
-	# Scroll container for all content
+	# Scroll container
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_main_dock.add_child(scroll)
 	
-	# Content inside scroll
 	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(content)
@@ -167,29 +269,24 @@ func _create_editor_dock() -> void:
 	content.add_child(_make_label("Level"))
 	
 	var level_buttons := HBoxContainer.new()
-	
 	var new_btn := Button.new()
 	new_btn.text = "New"
 	new_btn.pressed.connect(_on_new_level)
 	level_buttons.add_child(new_btn)
-	
 	var load_btn := Button.new()
 	load_btn.text = "Load"
 	load_btn.pressed.connect(_on_load_level)
 	level_buttons.add_child(load_btn)
-	
 	var save_btn := Button.new()
 	save_btn.text = "Save"
 	save_btn.pressed.connect(_on_save_level)
 	level_buttons.add_child(save_btn)
-	
 	content.add_child(level_buttons)
 	
 	content.add_child(HSeparator.new())
 	
 	# ===== TILE SELECTOR =====
 	content.add_child(_make_label("Selected Tile"))
-	
 	_tile_selector = OptionButton.new()
 	_tile_selector.name = "TileSelector"
 	_update_tile_selector()
@@ -199,39 +296,64 @@ func _create_editor_dock() -> void:
 	content.add_child(HSeparator.new())
 	
 	# ===== EDITING TOOLS =====
-	content.add_child(_make_label("Tool"))
+	content.add_child(_make_label("Tool (Right-click for menu)"))
 	
-	var tool_container := HBoxContainer.new()
 	var tool_group := ButtonGroup.new()
 	
+	# Row 1: Paint, Erase, Select
+	var tool_row1 := HBoxContainer.new()
+	
 	var paint_btn := Button.new()
+	paint_btn.name = "PaintBtn"
 	paint_btn.text = "Paint"
 	paint_btn.toggle_mode = true
 	paint_btn.button_pressed = true
 	paint_btn.button_group = tool_group
 	paint_btn.pressed.connect(func(): _edit_mode = 0; _clear_selection(); _set_status("Tool: Paint"))
-	tool_container.add_child(paint_btn)
+	tool_row1.add_child(paint_btn)
 	
 	var erase_btn := Button.new()
+	erase_btn.name = "EraseBtn"
 	erase_btn.text = "Erase"
 	erase_btn.toggle_mode = true
 	erase_btn.button_group = tool_group
 	erase_btn.pressed.connect(func(): _edit_mode = 1; _clear_selection(); _set_status("Tool: Erase"))
-	tool_container.add_child(erase_btn)
+	tool_row1.add_child(erase_btn)
 	
 	var select_btn := Button.new()
+	select_btn.name = "SelectBtn"
 	select_btn.text = "Select"
 	select_btn.toggle_mode = true
 	select_btn.button_group = tool_group
 	select_btn.pressed.connect(func(): _edit_mode = 2; _set_status("Tool: Select - Click first corner"))
-	tool_container.add_child(select_btn)
+	tool_row1.add_child(select_btn)
 	
-	content.add_child(tool_container)
+	content.add_child(tool_row1)
 	
-	# ===== Y LEVEL (HEIGHT) =====
+	# Row 2: Rect Fill, Bucket Fill
+	var tool_row2 := HBoxContainer.new()
+	
+	var rect_btn := Button.new()
+	rect_btn.name = "RectFillBtn"
+	rect_btn.text = "Rect Fill"
+	rect_btn.toggle_mode = true
+	rect_btn.button_group = tool_group
+	rect_btn.pressed.connect(func(): _edit_mode = 3; _clear_selection(); _set_status("Tool: Rect Fill - Click and drag"))
+	tool_row2.add_child(rect_btn)
+	
+	var bucket_btn := Button.new()
+	bucket_btn.name = "BucketBtn"
+	bucket_btn.text = "Bucket"
+	bucket_btn.toggle_mode = true
+	bucket_btn.button_group = tool_group
+	bucket_btn.pressed.connect(func(): _edit_mode = 4; _clear_selection(); _set_status("Tool: Bucket Fill - Click empty area"))
+	tool_row2.add_child(bucket_btn)
+	
+	content.add_child(tool_row2)
+	
+	# ===== Y LEVEL =====
 	var y_container := HBoxContainer.new()
 	y_container.add_child(_make_label("Y Level: "))
-	
 	_y_level_spinbox = SpinBox.new()
 	_y_level_spinbox.name = "YLevel"
 	_y_level_spinbox.min_value = 0
@@ -240,13 +362,17 @@ func _create_editor_dock() -> void:
 	_y_level_spinbox.value_changed.connect(_on_y_level_changed)
 	_y_level_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	y_container.add_child(_y_level_spinbox)
-	
 	content.add_child(y_container)
+	
+	var y_hint := Label.new()
+	y_hint.text = "(Mouse wheel to change)"
+	y_hint.add_theme_font_size_override("font_size", 11)
+	y_hint.add_theme_color_override("font_color", Color.GRAY)
+	content.add_child(y_hint)
 	
 	# ===== BRUSH SIZE =====
 	var brush_container := HBoxContainer.new()
 	brush_container.add_child(_make_label("Brush: "))
-	
 	_brush_size_spinbox = SpinBox.new()
 	_brush_size_spinbox.name = "BrushSize"
 	_brush_size_spinbox.min_value = 1
@@ -255,14 +381,12 @@ func _create_editor_dock() -> void:
 	_brush_size_spinbox.value_changed.connect(_on_brush_size_changed)
 	_brush_size_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	brush_container.add_child(_brush_size_spinbox)
-	
 	content.add_child(brush_container)
 	
 	content.add_child(HSeparator.new())
 	
 	# ===== SELECTION OPERATIONS =====
 	content.add_child(_make_label("Selection"))
-	
 	var selection_info := Label.new()
 	selection_info.name = "SelectionInfo"
 	selection_info.text = "No selection"
@@ -270,36 +394,29 @@ func _create_editor_dock() -> void:
 	content.add_child(selection_info)
 	
 	var selection_buttons1 := HBoxContainer.new()
-	
 	var save_chunk_btn := Button.new()
 	save_chunk_btn.text = "Save Chunk"
 	save_chunk_btn.pressed.connect(_on_save_chunk)
 	selection_buttons1.add_child(save_chunk_btn)
-	
 	var load_chunk_btn := Button.new()
 	load_chunk_btn.text = "Load Chunk"
 	load_chunk_btn.pressed.connect(_on_load_chunk)
 	selection_buttons1.add_child(load_chunk_btn)
-	
 	content.add_child(selection_buttons1)
 	
 	var selection_buttons2 := HBoxContainer.new()
-	
 	var fill_btn := Button.new()
 	fill_btn.text = "Fill"
 	fill_btn.pressed.connect(_on_fill_selection)
 	selection_buttons2.add_child(fill_btn)
-	
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear"
 	clear_btn.pressed.connect(_on_clear_selection_tiles)
 	selection_buttons2.add_child(clear_btn)
-	
 	var deselect_btn := Button.new()
 	deselect_btn.text = "Deselect"
 	deselect_btn.pressed.connect(_clear_selection)
 	selection_buttons2.add_child(deselect_btn)
-	
 	content.add_child(selection_buttons2)
 	
 	content.add_child(HSeparator.new())
@@ -316,10 +433,8 @@ func _create_editor_dock() -> void:
 	
 	# ===== CELL SIZE =====
 	content.add_child(_make_label("Cell Size"))
-	
 	var cell_grid := GridContainer.new()
 	cell_grid.columns = 4
-	
 	cell_grid.add_child(_make_label("X:"))
 	var cell_x := SpinBox.new()
 	cell_x.name = "CellSizeX"
@@ -330,7 +445,6 @@ func _create_editor_dock() -> void:
 	cell_x.custom_minimum_size.x = 60
 	cell_x.value_changed.connect(func(v): _grid_settings.cell_size_x = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_x)
-	
 	cell_grid.add_child(_make_label("Y:"))
 	var cell_y := SpinBox.new()
 	cell_y.name = "CellSizeY"
@@ -341,7 +455,6 @@ func _create_editor_dock() -> void:
 	cell_y.custom_minimum_size.x = 60
 	cell_y.value_changed.connect(func(v): _grid_settings.cell_size_y = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_y)
-	
 	cell_grid.add_child(_make_label("Z:"))
 	var cell_z := SpinBox.new()
 	cell_z.name = "CellSizeZ"
@@ -352,17 +465,14 @@ func _create_editor_dock() -> void:
 	cell_z.custom_minimum_size.x = 60
 	cell_z.value_changed.connect(func(v): _grid_settings.cell_size_z = v; _save_settings(); _update_grid_lines())
 	cell_grid.add_child(cell_z)
-	
 	content.add_child(cell_grid)
 	
 	content.add_child(HSeparator.new())
 	
 	# ===== LEVEL SIZE =====
 	content.add_child(_make_label("Level Size (cells)"))
-	
 	var size_grid := GridContainer.new()
 	size_grid.columns = 4
-	
 	size_grid.add_child(_make_label("W:"))
 	var size_x := SpinBox.new()
 	size_x.name = "LevelSizeX"
@@ -372,7 +482,6 @@ func _create_editor_dock() -> void:
 	size_x.custom_minimum_size.x = 60
 	size_x.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_x)
-	
 	size_grid.add_child(_make_label("H:"))
 	var size_y := SpinBox.new()
 	size_y.name = "LevelSizeY"
@@ -382,7 +491,6 @@ func _create_editor_dock() -> void:
 	size_y.custom_minimum_size.x = 60
 	size_y.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_y)
-	
 	size_grid.add_child(_make_label("D:"))
 	var size_z := SpinBox.new()
 	size_z.name = "LevelSizeZ"
@@ -392,20 +500,17 @@ func _create_editor_dock() -> void:
 	size_z.custom_minimum_size.x = 60
 	size_z.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_z)
-	
 	content.add_child(size_grid)
 	
 	content.add_child(HSeparator.new())
 	
 	# ===== CURVED WORLD =====
 	content.add_child(_make_label("Curved World"))
-	
 	var curve_check := CheckBox.new()
 	curve_check.name = "CurveEnabled"
 	curve_check.text = "Enable Preview"
 	curve_check.toggled.connect(_on_curve_toggled)
 	content.add_child(curve_check)
-	
 	var intensity_hbox := HBoxContainer.new()
 	intensity_hbox.add_child(_make_label("Curve:"))
 	var intensity := HSlider.new()
@@ -423,13 +528,11 @@ func _create_editor_dock() -> void:
 	
 	# ===== EXPORT =====
 	content.add_child(_make_label("Export"))
-	
 	var export_curve := CheckBox.new()
 	export_curve.name = "ExportWithCurve"
 	export_curve.text = "Apply Curved Shader"
 	export_curve.button_pressed = true
 	content.add_child(export_curve)
-	
 	var export_btn := Button.new()
 	export_btn.text = "Export Level"
 	export_btn.pressed.connect(_on_export_level)
@@ -437,7 +540,7 @@ func _create_editor_dock() -> void:
 	
 	content.add_child(HSeparator.new())
 	
-	# Status (outside scroll, at bottom)
+	# Status
 	var status := Label.new()
 	status.name = "Status"
 	status.text = "Check 'Enable Level Editing' to start"
@@ -532,8 +635,11 @@ func _clear_selection() -> void:
 	_selection_end = Vector3i(-1, -1, -1)
 	_has_selection = false
 	_awaiting_second_click = false
+	_rect_dragging = false
+	_rect_drag_start = Vector3i(-1, -1, -1)
 	_update_selection_info()
 	_update_selection_visual()
+	_update_rect_preview(Vector3i(-1, -1, -1))
 	if _edit_mode == 2:
 		_set_status("Tool: Select - Click first corner")
 
@@ -572,15 +678,18 @@ func _update_brush_preview(center_pos: Vector3i) -> void:
 	if not _brush_preview_mesh or not _grid_settings:
 		return
 	
-	# Only show brush preview in paint/erase mode
-	if _edit_mode == 2:  # Select mode
+	# Only show in paint/erase mode
+	if _edit_mode != 0 and _edit_mode != 1:
+		_brush_preview_mesh.visible = false
+		return
+	
+	if center_pos.x < 0:
 		_brush_preview_mesh.visible = false
 		return
 	
 	var cell := _grid_settings.get_cell_size()
 	var half := _brush_size / 2
 	
-	# Calculate brush bounds (centered on cursor)
 	var min_x := center_pos.x - half
 	var min_z := center_pos.z - half
 	var max_x := min_x + _brush_size
@@ -598,11 +707,37 @@ func _update_brush_preview(center_pos: Vector3i) -> void:
 	_brush_preview_mesh.position = center
 	_brush_preview_mesh.visible = true
 
+func _update_rect_preview(current_pos: Vector3i) -> void:
+	if not _rect_preview_mesh or not _grid_settings:
+		return
+	
+	if not _rect_dragging or _rect_drag_start.x < 0 or current_pos.x < 0:
+		_rect_preview_mesh.visible = false
+		return
+	
+	var cell := _grid_settings.get_cell_size()
+	
+	var min_x := mini(_rect_drag_start.x, current_pos.x)
+	var max_x := maxi(_rect_drag_start.x, current_pos.x) + 1
+	var min_z := mini(_rect_drag_start.z, current_pos.z)
+	var max_z := maxi(_rect_drag_start.z, current_pos.z) + 1
+	
+	var world_min := Vector3(min_x * cell.x, _current_y_level * cell.y, min_z * cell.z)
+	var world_max := Vector3(max_x * cell.x, (_current_y_level + 1) * cell.y, max_z * cell.z)
+	
+	var center := (world_min + world_max) / 2.0
+	var size := world_max - world_min
+	
+	var box := BoxMesh.new()
+	box.size = size
+	_rect_preview_mesh.mesh = box
+	_rect_preview_mesh.position = center
+	_rect_preview_mesh.visible = true
+
 func _on_save_chunk() -> void:
 	if not _has_selection or not _current_level:
 		_set_status("Make a selection first!")
 		return
-	
 	var dialog := EditorFileDialog.new()
 	dialog.file_mode = EditorFileDialog.FILE_MODE_SAVE_FILE
 	dialog.access = EditorFileDialog.ACCESS_RESOURCES
@@ -614,18 +749,16 @@ func _on_save_chunk() -> void:
 func _save_chunk_file(path: String) -> void:
 	var chunk := XtremeLevelChunk.create_from_region(_current_level, _selection_start, _selection_end)
 	chunk.chunk_name = path.get_file().get_basename()
-	
 	var err := ResourceSaver.save(chunk, path)
 	if err == OK:
-		_set_status("Chunk saved: %s (%d tiles)" % [path.get_file(), chunk.get_tile_count()])
+		_set_status("Chunk saved: %s" % path.get_file())
 	else:
-		_set_status("Error saving chunk: %d" % err)
+		_set_status("Error saving chunk")
 
 func _on_load_chunk() -> void:
 	if not _current_level:
 		_set_status("Create or load a level first!")
 		return
-	
 	var dialog := EditorFileDialog.new()
 	dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_FILE
 	dialog.access = EditorFileDialog.ACCESS_RESOURCES
@@ -637,11 +770,9 @@ func _on_load_chunk() -> void:
 func _load_chunk_file(path: String) -> void:
 	var res := load(path)
 	if not res is XtremeLevelChunk:
-		_set_status("Error: Not a valid chunk file")
+		_set_status("Error: Invalid chunk file")
 		return
-	
 	var chunk := res as XtremeLevelChunk
-	
 	var place_pos := Vector3i(0, _current_y_level, 0)
 	if _has_selection:
 		place_pos = Vector3i(
@@ -649,19 +780,15 @@ func _load_chunk_file(path: String) -> void:
 			mini(_selection_start.y, _selection_end.y),
 			mini(_selection_start.z, _selection_end.z)
 		)
-	
 	chunk.stamp_into(_current_level, place_pos, true)
-	
 	if _grid_visualizer:
 		_grid_visualizer.rebuild()
-	
-	_set_status("Chunk loaded: %s at %s" % [chunk.chunk_name, place_pos])
+	_set_status("Chunk loaded at %s" % place_pos)
 
 func _on_fill_selection() -> void:
 	if not _has_selection or not _current_level:
 		_set_status("Make a selection first!")
 		return
-	
 	var min_pos := Vector3i(
 		mini(_selection_start.x, _selection_end.x),
 		mini(_selection_start.y, _selection_end.y),
@@ -672,24 +799,20 @@ func _on_fill_selection() -> void:
 		maxi(_selection_start.y, _selection_end.y),
 		maxi(_selection_start.z, _selection_end.z)
 	)
-	
 	var count := 0
 	for x in range(min_pos.x, max_pos.x + 1):
 		for y in range(min_pos.y, max_pos.y + 1):
 			for z in range(min_pos.z, max_pos.z + 1):
 				_current_level.set_tile(Vector3i(x, y, z), _selected_tile_id)
 				count += 1
-	
 	if _grid_visualizer:
 		_grid_visualizer.rebuild()
-	
-	_set_status("Filled %d tiles with %s" % [count, _selected_tile_id])
+	_set_status("Filled %d tiles" % count)
 
 func _on_clear_selection_tiles() -> void:
 	if not _has_selection or not _current_level:
 		_set_status("Make a selection first!")
 		return
-	
 	var min_pos := Vector3i(
 		mini(_selection_start.x, _selection_end.x),
 		mini(_selection_start.y, _selection_end.y),
@@ -700,17 +823,14 @@ func _on_clear_selection_tiles() -> void:
 		maxi(_selection_start.y, _selection_end.y),
 		maxi(_selection_start.z, _selection_end.z)
 	)
-	
 	var count := 0
 	for x in range(min_pos.x, max_pos.x + 1):
 		for y in range(min_pos.y, max_pos.y + 1):
 			for z in range(min_pos.z, max_pos.z + 1):
 				_current_level.clear_tile(Vector3i(x, y, z))
 				count += 1
-	
 	if _grid_visualizer:
 		_grid_visualizer.rebuild()
-	
 	_set_status("Cleared %d tiles" % count)
 
 # ============ Level Management ============
@@ -719,18 +839,15 @@ func _on_new_level() -> void:
 	if not _editing_enabled:
 		_set_status("Enable editing first!")
 		return
-	
 	_current_level = XtremeLevelData.new()
 	_current_level.initialize(_grid_settings)
 	_current_level.level_name = "New Level"
-	
 	var size_x := _main_dock.find_child("LevelSizeX", true, false) as SpinBox
 	var size_y := _main_dock.find_child("LevelSizeY", true, false) as SpinBox
 	var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
 	if size_x and size_y and size_z:
 		_current_level.resize(int(size_x.value), int(size_y.value), int(size_z.value))
 		_y_level_spinbox.max_value = size_y.value - 1
-	
 	_clear_selection()
 	_create_or_update_visualizer()
 	_set_status("New level - Start painting!")
@@ -739,7 +856,6 @@ func _on_load_level() -> void:
 	if not _editing_enabled:
 		_set_status("Enable editing first!")
 		return
-	
 	var dialog := EditorFileDialog.new()
 	dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_FILE
 	dialog.access = EditorFileDialog.ACCESS_RESOURCES
@@ -753,7 +869,6 @@ func _load_level_file(path: String) -> void:
 	if res is XtremeLevelData:
 		_current_level = res
 		_current_level.initialize(_grid_settings)
-		
 		var size_x := _main_dock.find_child("LevelSizeX", true, false) as SpinBox
 		var size_y := _main_dock.find_child("LevelSizeY", true, false) as SpinBox
 		var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
@@ -761,7 +876,6 @@ func _load_level_file(path: String) -> void:
 		if size_y: size_y.value = _current_level.size_y
 		if size_z: size_z.value = _current_level.size_z
 		_y_level_spinbox.max_value = _current_level.size_y - 1
-		
 		_clear_selection()
 		_create_or_update_visualizer()
 		_set_status("Loaded: %s" % path.get_file())
@@ -785,7 +899,7 @@ func _save_level_file(path: String) -> void:
 	if err == OK:
 		_set_status("Saved: %s" % path.get_file())
 	else:
-		_set_status("Error saving: %d" % err)
+		_set_status("Error saving")
 
 func _on_export_level() -> void:
 	if not _current_level:
@@ -804,18 +918,15 @@ func _export_level_file(path: String) -> void:
 	exporter.grid_settings = _grid_settings
 	exporter.tile_palette = _current_palette
 	exporter.level_data = _current_level
-	
 	var curve_check := _main_dock.find_child("ExportWithCurve", true, false) as CheckBox
 	exporter.apply_curved_world = curve_check.button_pressed if curve_check else true
-	
 	var intensity := _main_dock.find_child("CurveIntensity", true, false) as HSlider
 	exporter.curve_intensity = intensity.value if intensity else 0.01
-	
 	var err := exporter.export_level(path)
 	if err == OK:
 		_set_status("Exported: %s" % path.get_file())
 	else:
-		_set_status("Export error: %d" % err)
+		_set_status("Export error")
 
 func _on_level_size_changed(_value: float) -> void:
 	if not _current_level:
@@ -845,91 +956,86 @@ func _create_or_update_visualizer() -> void:
 	if not scene_root:
 		_set_status("Open a 3D scene first!")
 		return
-	
 	_cleanup_visualizer()
-	
 	_grid_visualizer = XtremeGridVisualizer.new()
 	_grid_visualizer.name = "XtremeGridVisualizer"
 	_grid_visualizer.grid_settings = _grid_settings
 	_grid_visualizer.level_data = _current_level
 	_grid_visualizer.tile_palette = _current_palette
-	
 	scene_root.add_child(_grid_visualizer)
 	_grid_visualizer.owner = scene_root
-	
 	_create_grid_lines(scene_root)
 	_create_selection_box(scene_root)
 	_create_brush_preview(scene_root)
+	_create_rect_preview(scene_root)
 
 func _create_grid_lines(parent: Node) -> void:
 	_grid_lines_mesh = MeshInstance3D.new()
 	_grid_lines_mesh.name = "XtremeGridLines"
-	
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(0.3, 0.6, 1.0, 0.4)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_grid_lines_mesh.material_override = mat
-	
 	parent.add_child(_grid_lines_mesh)
 	_grid_lines_mesh.owner = parent
-	
 	_update_grid_lines()
 
 func _create_selection_box(parent: Node) -> void:
 	_selection_box_mesh = MeshInstance3D.new()
 	_selection_box_mesh.name = "XtremeSelectionBox"
-	
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(1.0, 1.0, 0.0, 0.3)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_selection_box_mesh.material_override = mat
 	_selection_box_mesh.visible = false
-	
 	parent.add_child(_selection_box_mesh)
 	_selection_box_mesh.owner = parent
 
 func _create_brush_preview(parent: Node) -> void:
 	_brush_preview_mesh = MeshInstance3D.new()
 	_brush_preview_mesh.name = "XtremeBrushPreview"
-	
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(0.0, 1.0, 0.5, 0.25)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_brush_preview_mesh.material_override = mat
 	_brush_preview_mesh.visible = false
-	
 	parent.add_child(_brush_preview_mesh)
 	_brush_preview_mesh.owner = parent
+
+func _create_rect_preview(parent: Node) -> void:
+	_rect_preview_mesh = MeshInstance3D.new()
+	_rect_preview_mesh.name = "XtremeRectPreview"
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.5, 0.5, 1.0, 0.35)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_rect_preview_mesh.material_override = mat
+	_rect_preview_mesh.visible = false
+	parent.add_child(_rect_preview_mesh)
+	_rect_preview_mesh.owner = parent
 
 func _update_grid_lines() -> void:
 	if not _grid_lines_mesh or not _current_level or not _grid_settings:
 		return
-	
 	var im := ImmediateMesh.new()
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
-	
 	var cell := _grid_settings.get_cell_size()
 	var y_pos := _current_y_level * cell.y
-	
 	var width := _current_level.size_x
 	var depth := _current_level.size_z
-	
 	for z in range(depth + 1):
 		var z_pos := z * cell.z
 		im.surface_add_vertex(Vector3(0, y_pos, z_pos))
 		im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
-	
 	for x in range(width + 1):
 		var x_pos := x * cell.x
 		im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
 		im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
-	
 	im.surface_end()
 	_grid_lines_mesh.mesh = im
-	
 	if _grid_visible_check:
 		_grid_lines_mesh.visible = _grid_visible_check.button_pressed
 
@@ -942,16 +1048,38 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if not _editing_enabled or not _current_level or not _grid_settings:
 		return AFTER_GUI_INPUT_PASS
 	
+	# Mouse wheel for Y level
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+		
+		# Scroll wheel - change Y level
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			_change_y_level(1)
+			return AFTER_GUI_INPUT_STOP
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_change_y_level(-1)
+			return AFTER_GUI_INPUT_STOP
+		
+		# Right click - context menu
+		if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			_last_mouse_pos = mb.position
+			_show_context_menu(mb.global_position)
+			return AFTER_GUI_INPUT_STOP
+		
+		# Left click
+		if mb.button_index == MOUSE_BUTTON_LEFT:
 			var from := camera.project_ray_origin(mb.position)
 			var dir := camera.project_ray_normal(mb.position)
 			var pos := _raycast_grid(from, dir)
 			
-			if pos.x >= 0:
-				_handle_click(pos)
-				return AFTER_GUI_INPUT_STOP
+			if mb.pressed:
+				if pos.x >= 0:
+					_handle_click_pressed(pos)
+					return AFTER_GUI_INPUT_STOP
+			else:  # Released
+				if _rect_dragging:
+					_handle_rect_release(pos)
+					return AFTER_GUI_INPUT_STOP
 	
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -963,30 +1091,35 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			if _grid_visualizer:
 				_grid_visualizer.set_hover_position(pos)
 			_update_brush_preview(pos)
+			
+			# Update rect preview while dragging
+			if _rect_dragging:
+				_update_rect_preview(pos)
 	
 	return AFTER_GUI_INPUT_PASS
+
+func _show_context_menu(global_pos: Vector2) -> void:
+	if _context_menu:
+		_context_menu.position = Vector2i(global_pos)
+		_context_menu.popup()
 
 func _raycast_grid(origin: Vector3, direction: Vector3) -> Vector3i:
 	if not _current_level or not _grid_settings:
 		return Vector3i(-1, -1, -1)
-	
 	var cell_size := _grid_settings.get_cell_size()
 	var plane_y := _current_y_level * cell_size.y
-	
 	if abs(direction.y) > 0.001:
 		var t := (plane_y - origin.y) / direction.y
 		if t > 0:
 			var hit := origin + direction * t
 			var grid_x := floori(hit.x / cell_size.x)
 			var grid_z := floori(hit.z / cell_size.z)
-			
 			if grid_x >= 0 and grid_x < _current_level.size_x \
 				and grid_z >= 0 and grid_z < _current_level.size_z:
 				return Vector3i(grid_x, _current_y_level, grid_z)
-	
 	return Vector3i(-1, -1, -1)
 
-func _handle_click(pos: Vector3i) -> void:
+func _handle_click_pressed(pos: Vector3i) -> void:
 	match _edit_mode:
 		0:  # Paint
 			_paint_at(pos)
@@ -994,11 +1127,43 @@ func _handle_click(pos: Vector3i) -> void:
 			_erase_at(pos)
 		2:  # Select
 			_select_at(pos)
+		3:  # Rect Fill - start drag
+			_rect_drag_start = pos
+			_rect_dragging = true
+			_update_rect_preview(pos)
+			_set_status("Rect Fill: Drag to size...")
+		4:  # Bucket Fill
+			_bucket_fill_at(pos)
+
+func _handle_rect_release(pos: Vector3i) -> void:
+	if not _rect_dragging:
+		return
+	
+	_rect_dragging = false
+	_rect_preview_mesh.visible = false
+	
+	if pos.x < 0:
+		pos = _rect_drag_start
+	
+	# Fill the rectangle
+	var min_x := mini(_rect_drag_start.x, pos.x)
+	var max_x := maxi(_rect_drag_start.x, pos.x)
+	var min_z := mini(_rect_drag_start.z, pos.z)
+	var max_z := maxi(_rect_drag_start.z, pos.z)
+	
+	var count := 0
+	for x in range(min_x, max_x + 1):
+		for z in range(min_z, max_z + 1):
+			var tile_pos := Vector3i(x, _current_y_level, z)
+			_current_level.set_tile(tile_pos, _selected_tile_id)
+			_grid_visualizer.update_tile(tile_pos)
+			count += 1
+	
+	_set_status("Rect filled %d tiles" % count)
 
 func _paint_at(center_pos: Vector3i) -> void:
 	var half := _brush_size / 2
 	var placed := 0
-	
 	for dx in range(_brush_size):
 		for dz in range(_brush_size):
 			var pos := Vector3i(
@@ -1006,22 +1171,18 @@ func _paint_at(center_pos: Vector3i) -> void:
 				center_pos.y,
 				center_pos.z - half + dz
 			)
-			
 			if pos.x < 0 or pos.x >= _current_level.size_x:
 				continue
 			if pos.z < 0 or pos.z >= _current_level.size_z:
 				continue
-			
 			_current_level.set_tile(pos, _selected_tile_id)
 			_grid_visualizer.update_tile(pos)
 			placed += 1
-	
 	_set_status("Painted %d at Y=%d" % [placed, _current_y_level])
 
 func _erase_at(center_pos: Vector3i) -> void:
 	var half := _brush_size / 2
 	var erased := 0
-	
 	for dx in range(_brush_size):
 		for dz in range(_brush_size):
 			var pos := Vector3i(
@@ -1029,21 +1190,17 @@ func _erase_at(center_pos: Vector3i) -> void:
 				center_pos.y,
 				center_pos.z - half + dz
 			)
-			
 			if pos.x < 0 or pos.x >= _current_level.size_x:
 				continue
 			if pos.z < 0 or pos.z >= _current_level.size_z:
 				continue
-			
 			_current_level.clear_tile(pos)
 			_grid_visualizer.update_tile(pos)
 			erased += 1
-	
 	_set_status("Erased %d at Y=%d" % [erased, _current_y_level])
 
 func _select_at(pos: Vector3i) -> void:
 	if not _awaiting_second_click:
-		# First click - set start
 		_selection_start = pos
 		_selection_end = pos
 		_has_selection = false
@@ -1052,16 +1209,58 @@ func _select_at(pos: Vector3i) -> void:
 		_update_selection_visual()
 		_set_status("First corner: %s - Click second corner" % pos)
 	else:
-		# Second click - complete selection
 		_selection_end = pos
 		_has_selection = true
 		_awaiting_second_click = false
 		_update_selection_info()
 		_update_selection_visual()
-		
 		var size := Vector3i(
 			absi(_selection_end.x - _selection_start.x) + 1,
 			absi(_selection_end.y - _selection_start.y) + 1,
 			absi(_selection_end.z - _selection_start.z) + 1
 		)
 		_set_status("Selected: %dx%dx%d" % [size.x, size.y, size.z])
+
+func _bucket_fill_at(start_pos: Vector3i) -> void:
+	# Flood fill empty cells at current Y level
+	if _current_level.has_tile(start_pos):
+		_set_status("Bucket Fill: Click on empty cell")
+		return
+	
+	var filled := 0
+	var to_fill: Array[Vector3i] = [start_pos]
+	var visited := {}
+	visited[start_pos] = true
+	
+	while to_fill.size() > 0 and filled < 10000:  # Safety limit
+		var pos: Vector3i = to_fill.pop_front()
+		
+		# Skip if out of bounds
+		if pos.x < 0 or pos.x >= _current_level.size_x:
+			continue
+		if pos.z < 0 or pos.z >= _current_level.size_z:
+			continue
+		
+		# Skip if already has a tile
+		if _current_level.has_tile(pos):
+			continue
+		
+		# Fill this cell
+		_current_level.set_tile(pos, _selected_tile_id)
+		_grid_visualizer.update_tile(pos)
+		filled += 1
+		
+		# Add neighbors (4-directional on XZ plane)
+		var neighbors := [
+			Vector3i(pos.x + 1, pos.y, pos.z),
+			Vector3i(pos.x - 1, pos.y, pos.z),
+			Vector3i(pos.x, pos.y, pos.z + 1),
+			Vector3i(pos.x, pos.y, pos.z - 1),
+		]
+		
+		for neighbor in neighbors:
+			if neighbor not in visited:
+				visited[neighbor] = true
+				to_fill.append(neighbor)
+	
+	_set_status("Bucket filled %d tiles" % filled)

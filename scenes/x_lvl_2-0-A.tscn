@@ -1,13 +1,15 @@
-[gd_scene load_steps=24 format=3 uid="uid://kam4bmwud35t"]
+[gd_scene load_steps=29 format=3 uid="uid://d033n6wmhy27o"]
 
-[ext_resource type="Script" uid="uid://bmnbtnshxoh5m" path="res://addons/xtreme_level_editor/nodes/grid_visualizer.gd" id="1_eovuc"]
-[ext_resource type="Script" uid="uid://caxvh6ht57qyb" path="res://addons/xtreme_level_editor/resources/level_data.gd" id="2_jjsnv"]
-[ext_resource type="Script" uid="uid://c8fsm020sllgq" path="res://addons/xtreme_level_editor/resources/tile_palette.gd" id="3_gbqyk"]
-[ext_resource type="Script" uid="uid://drdvpsvv7715e" path="res://addons/xtreme_level_editor/resources/tile_definition.gd" id="4_l4hv8"]
-[ext_resource type="Script" uid="uid://ckfr4jpgs5maf" path="res://addons/xtreme_level_editor/resources/grid_settings.gd" id="5_eovuc"]
+[ext_resource type="Script" uid="uid://bmnbtnshxoh5m" path="res://addons/xtreme_level_editor/nodes/grid_visualizer.gd" id="1_j6fe8"]
+[ext_resource type="Script" uid="uid://caxvh6ht57qyb" path="res://addons/xtreme_level_editor/resources/level_data.gd" id="2_p8j71"]
+[ext_resource type="Script" uid="uid://c8fsm020sllgq" path="res://addons/xtreme_level_editor/resources/tile_palette.gd" id="3_74vja"]
+[ext_resource type="Script" uid="uid://drdvpsvv7715e" path="res://addons/xtreme_level_editor/resources/tile_definition.gd" id="4_6iy21"]
+[ext_resource type="Script" uid="uid://ckfr4jpgs5maf" path="res://addons/xtreme_level_editor/resources/grid_settings.gd" id="5_7pk7o"]
+[ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="6_74vja"]
+[ext_resource type="Script" uid="uid://u4103bmt3fgy" path="res://addons/xtreme_level_editor/nodes/xtreme_camera_fixed.gd" id="7_6iy21"]
 
 [sub_resource type="Resource" id="Resource_jjsnv"]
-script = ExtResource("2_jjsnv")
+script = ExtResource("2_p8j71")
 level_name = "New Level"
 creation_date = "2026-01-04T13:35:21"
 last_modified = "2026-01-04T13:38:32"
@@ -836,75 +838,75 @@ _grid_data = {
 }
 
 [sub_resource type="Resource" id="Resource_gbqyk"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"solid"
 display_name = "Solid Block"
 editor_color = Color(0.6, 0.6, 0.6, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_l4hv8"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"platform"
 display_name = "Platform"
 editor_color = Color(0.4, 0.7, 0.4, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_2rodj"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"spike"
 display_name = "Spikes"
 editor_color = Color(1, 0.2, 0.2, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_4ohjn"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"spring"
 display_name = "Spring"
 editor_color = Color(1, 1, 0.2, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_3fkon"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"ring"
 display_name = "Ring"
 editor_color = Color(1, 0.85, 0, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_wkaig"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"boost"
 display_name = "Boost Pad"
 editor_color = Color(0.2, 0.8, 1, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_7x5es"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"checkpoint"
 display_name = "Checkpoint"
 editor_color = Color(0.2, 1, 0.5, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_a10cj"]
-script = ExtResource("4_l4hv8")
+script = ExtResource("4_6iy21")
 tile_id = &"goal"
 display_name = "Goal"
 editor_color = Color(0.3, 0.5, 1, 1)
 theme_tags = PackedStringArray()
 
 [sub_resource type="Resource" id="Resource_ufas8"]
-script = ExtResource("3_gbqyk")
-tiles = Array[ExtResource("4_l4hv8")]([SubResource("Resource_gbqyk"), SubResource("Resource_l4hv8"), SubResource("Resource_2rodj"), SubResource("Resource_4ohjn"), SubResource("Resource_3fkon"), SubResource("Resource_wkaig"), SubResource("Resource_7x5es"), SubResource("Resource_a10cj")])
+script = ExtResource("3_74vja")
+tiles = Array[ExtResource("4_6iy21")]([SubResource("Resource_gbqyk"), SubResource("Resource_l4hv8"), SubResource("Resource_2rodj"), SubResource("Resource_4ohjn"), SubResource("Resource_3fkon"), SubResource("Resource_wkaig"), SubResource("Resource_7x5es"), SubResource("Resource_a10cj")])
 palette_name = "Default"
 
 [sub_resource type="Resource" id="Resource_3ax01"]
-script = ExtResource("5_eovuc")
+script = ExtResource("5_7pk7o")
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_m2xba"]
 transparency = 1
 shading_mode = 0
 albedo_color = Color(0.3, 0.6, 1, 0.4)
 
-[sub_resource type="ImmediateMesh" id="ImmediateMesh_21s5h"]
+[sub_resource type="ImmediateMesh" id="ImmediateMesh_7pk7o"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kq1fn"]
 transparency = 1
@@ -916,7 +918,7 @@ transparency = 1
 shading_mode = 0
 albedo_color = Color(0, 1, 0.5, 0.25)
 
-[sub_resource type="BoxMesh" id="BoxMesh_ahl3k"]
+[sub_resource type="BoxMesh" id="BoxMesh_bhy2c"]
 size = Vector3(2, 2, 2)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1j1up"]
@@ -927,31 +929,59 @@ albedo_color = Color(0.5, 0.5, 1, 0.35)
 [sub_resource type="BoxMesh" id="BoxMesh_dx6d3"]
 size = Vector3(6, 2, 6)
 
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_4l1sf"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_vi7sa"]
+sky_material = SubResource("ProceduralSkyMaterial_4l1sf")
+
+[sub_resource type="Environment" id="Environment_bryyo"]
+background_mode = 2
+sky = SubResource("Sky_vi7sa")
+tonemap_mode = 2
+glow_enabled = true
+
 [node name="Node3D" type="Node3D"]
 
 [node name="XtremeGridVisualizer" type="Node3D" parent="."]
-script = ExtResource("1_eovuc")
+script = ExtResource("1_j6fe8")
 level_data = SubResource("Resource_jjsnv")
 tile_palette = SubResource("Resource_ufas8")
 grid_settings = SubResource("Resource_3ax01")
 curved_preview_enabled = true
-curve_intensity = 0.004
 
 [node name="XtremeGridLines" type="MeshInstance3D" parent="."]
 material_override = SubResource("StandardMaterial3D_m2xba")
-mesh = SubResource("ImmediateMesh_21s5h")
+mesh = SubResource("ImmediateMesh_7pk7o")
 
 [node name="XtremeSelectionBox" type="MeshInstance3D" parent="."]
 visible = false
 material_override = SubResource("StandardMaterial3D_kq1fn")
 
 [node name="XtremeBrushPreview" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 15, 111)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 23, 27)
 material_override = SubResource("StandardMaterial3D_0t2ew")
-mesh = SubResource("BoxMesh_ahl3k")
+mesh = SubResource("BoxMesh_bhy2c")
 
 [node name="XtremeRectPreview" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 5, 95)
 visible = false
 material_override = SubResource("StandardMaterial3D_1j1up")
 mesh = SubResource("BoxMesh_dx6d3")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_bryyo")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 17.45898, 15.861828, 3.6140842)
+shadow_enabled = true
+
+[node name="Player_1-4" parent="." instance=ExtResource("6_74vja")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22.929, 9, 9.743)
+
+[node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 22.538017, 8.783013, 5.748926)
+script = ExtResource("7_6iy21")
+target = NodePath("")
+pitch_degrees = -15.0
