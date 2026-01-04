@@ -2,8 +2,8 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
 
 // Curved World Shader for Sonic Xtreme-style effect
-// Displaces vertices AWAY from the camera (Z depth) based on distance from screen center
-// Creates a spherical effect where left, right, top, and bottom edges curve away
+// Displaces vertices TOWARD the camera (negative Z) based on distance from screen center
+// Creates a spherical effect where left, right, top, and bottom edges curve toward viewer
 
 group_uniforms curvature;
 // The center point of the curvature (usually player/camera position)
@@ -47,7 +47,7 @@ void vertex() {
 		float distance_sq = 0.0;
 		
 		if (curve_mode == 0) {
-			// Spherical - use both X and Y distance (curves all edges away)
+			// Spherical - use both X and Y distance (curves all edges)
 			distance_sq = offset_x * offset_x + offset_y * offset_y;
 		} else if (curve_mode == 1) {
 			// Cylindrical X - only curve based on X distance (left/right)
@@ -57,16 +57,16 @@ void vertex() {
 			distance_sq = offset_y * offset_y;
 		}
 		
-		// Calculate Z displacement (push vertices AWAY from camera)
-		// Positive Z displacement pushes geometry further from camera
-		float displacement = curve_intensity * distance_sq;
+		// Calculate Z displacement (pull vertices TOWARD camera)
+		// NEGATIVE Z displacement pulls geometry closer to camera at edges
+		float displacement = -curve_intensity * distance_sq;
 		
 		// Apply distance falloff based on Z distance to prevent extreme curvature
 		float z_distance = abs(world_position.z - curve_center.z);
 		float distance_factor = clamp(1.0 - z_distance / curve_max_distance, 0.0, 1.0);
 		displacement *= distance_factor;
 		
-		// Apply the displacement in world space (push away in Z)
+		// Apply the displacement in world space (pull toward camera in Z)
 		vec3 displaced_world = world_position;
 		displaced_world.z += displacement;
 		

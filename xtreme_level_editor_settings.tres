@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="XtremeGridSettings" load_steps=2 format=3 uid="uid://pts87qii5ayb"]
+[gd_resource type="Resource" script_class="XtremeGridSettings" load_steps=2 format=3 uid="uid://dar2stxt3gfwi"]
 
 [ext_resource type="Script" path="res://addons/xtreme_level_editor/resources/grid_settings.gd" id="1_i4o65"]
 
