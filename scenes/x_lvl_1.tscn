@@ -1,8 +1,21 @@
-[gd_scene load_steps=2518 format=3 uid="uid://bqiwcubpgcwlf"]
+[gd_scene load_steps=2521 format=3 uid="uid://bqiwcubpgcwlf"]
 
 [ext_resource type="Shader" uid="uid://c74pgccrraset" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_166ps"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="2_o265o"]
 [ext_resource type="Script" uid="uid://u4103bmt3fgy" path="res://addons/xtreme_level_editor/nodes/xtreme_camera_fixed.gd" id="3_vi7sa"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_o265o"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_vi7sa"]
+sky_material = SubResource("ProceduralSkyMaterial_o265o")
+
+[sub_resource type="Environment" id="Environment_gk0i7"]
+background_mode = 2
+sky = SubResource("Sky_vi7sa")
+tonemap_mode = 2
+glow_enabled = true
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_qpffo"]
 render_priority = 0
@@ -15089,6 +15102,13 @@ size = Vector3(2, 2, 2)
 size = Vector3(2, 2, 2)
 
 [node name="New_Level" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_gk0i7")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 17.45898, 15.861828, 3.6140842)
+shadow_enabled = true
 
 [node name="Geometry" type="Node3D" parent="."]
 
