@@ -31,32 +31,53 @@ var _material_cache: Dictionary = {}
 # Tile position lookup for hidden face removal
 var _tile_positions: Dictionary = {}
 
+# Rotation lookup
+var _tile_rotations: Dictionary = {}
+
 func export_level(path: String) -> Error:
 	if not level_data or not grid_settings or not tile_palette:
 		push_error("XtremeLevelExporter: Missing required data")
 		return ERR_INVALID_DATA
 	
 	var root := Node3D.new()
-	root.name = level_data.level_name.replace(" ", "_")
+	root.name = level_data.level_name.replace(" ", "_").replace(" ", "_")
 	
-	# Build tile position lookup for hidden face detection
+	# Build tile position and rotation lookup for hidden face detection
 	_tile_positions.clear()
+	_tile_rotations.clear()
 	var all_positions := level_data.get_all_tile_positions()
 	for tile_pos in all_positions:
-		_tile_positions[tile_pos] = level_data.get_tile(tile_pos)
+		var tile_id := level_data.get_tile(tile_pos)
+		# Skip multi-cell part markers
+		if tile_id == &"_multicell_part":
+			continue
+		_tile_positions[tile_pos] = tile_id
+		_tile_rotations[tile_pos] = level_data.get_tile_rotation(tile_pos)
 	
-	# Group tiles by type for batching
-	var tiles_by_type: Dictionary = {}
+	# Group tiles by type AND rotation for batching
+	# Key format: "tile_id|rot_x|rot_y|rot_z"
+	var tiles_by_type_rotation: Dictionary = {}
 	
-	for tile_pos in all_positions:
-		var tile_id: StringName = level_data.get_tile(tile_pos)
-		if tile_id not in tiles_by_type:
-			tiles_by_type[tile_id] = []
-		tiles_by_type[tile_id].append(tile_pos)
+	for tile_pos in _tile_positions.keys():
+		var tile_id: StringName = _tile_positions[tile_pos]
+		var rotation: Vector3i = _tile_rotations.get(tile_pos, Vector3i.ZERO)
+		var batch_key := "%s|%d|%d|%d" % [tile_id, rotation.x, rotation.y, rotation.z]
+		
+		if batch_key not in tiles_by_type_rotation:
+			tiles_by_type_rotation[batch_key] = {
+				"tile_id": tile_id,
+				"rotation": rotation,
+				"positions": []
+			}
+		tiles_by_type_rotation[batch_key]["positions"].append(tile_pos)
 	
-	# Create one batched mesh per tile type
-	for tile_id in tiles_by_type.keys():
-		var positions: Array = tiles_by_type[tile_id]
+	# Create one batched mesh per tile type + rotation combination
+	for batch_key in tiles_by_type_rotation.keys():
+		var batch_data: Dictionary = tiles_by_type_rotation[batch_key]
+		var tile_id: StringName = batch_data["tile_id"]
+		var rotation: Vector3i = batch_data["rotation"]
+		var positions: Array = batch_data["positions"]
+		
 		if positions.size() == 0:
 			continue
 		
@@ -64,7 +85,7 @@ func export_level(path: String) -> Error:
 		if not tile_def:
 			continue
 		
-		var batched_mesh := _create_batched_mesh(positions, tile_def)
+		var batched_mesh := _create_batched_mesh_with_rotation(positions, tile_def, rotation)
 		if batched_mesh:
 			root.add_child(batched_mesh)
 			batched_mesh.owner = root
@@ -90,10 +111,14 @@ func export_level(path: String) -> Error:
 	# Clear caches
 	_material_cache.clear()
 	_tile_positions.clear()
+	_tile_rotations.clear()
 	
 	return err
 
 func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> MeshInstance3D:
+	return _create_batched_mesh_with_rotation(positions, tile_def, Vector3i.ZERO)
+
+func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDefinition, rotation: Vector3i) -> MeshInstance3D:
 	if positions.size() == 0:
 		return null
 	
@@ -107,6 +132,15 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 	var min_bounds := Vector3(INF, INF, INF)
 	var max_bounds := Vector3(-INF, -INF, -INF)
 	
+	# Create rotation basis for rotating vertices
+	var rot_basis := Basis.IDENTITY
+	if rotation != Vector3i.ZERO:
+		rot_basis = Basis.from_euler(Vector3(
+			rotation.x * PI / 2.0,
+			rotation.y * PI / 2.0,
+			rotation.z * PI / 2.0
+		))
+	
 	for pos in positions:
 		var world_pos := Vector3(
 			pos.x * cell_size.x + cell_size.x * 0.5,
@@ -118,8 +152,8 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 		min_bounds = min_bounds.min(world_pos - cell_size * 0.5)
 		max_bounds = max_bounds.max(world_pos + cell_size * 0.5)
 		
-		# Add cube with hidden face removal
-		_add_cube_with_occlusion(surface_tool, pos, world_pos, cell_size, tile_def)
+		# Add cube with hidden face removal and rotation
+		_add_cube_with_occlusion_rotated(surface_tool, pos, world_pos, cell_size, tile_def, rot_basis)
 	
 	surface_tool.generate_normals()
 	var array_mesh := surface_tool.commit()
@@ -128,7 +162,10 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 		return null
 	
 	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.name = str(tile_def.tile_id) + "_batch"
+	var rot_suffix := ""
+	if rotation != Vector3i.ZERO:
+		rot_suffix = "_r%d%d%d" % [rotation.x, rotation.y, rotation.z]
+	mesh_instance.name = str(tile_def.tile_id) + rot_suffix + "_batch"
 	mesh_instance.mesh = array_mesh
 	
 	# Set expanded custom AABB to prevent frustum culling issues
@@ -145,22 +182,27 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 	
 	return mesh_instance
 
-func _add_cube_with_occlusion(st: SurfaceTool, grid_pos: Vector3i, center: Vector3, size: Vector3, tile_def: XtremeTileDefinition) -> void:
+func _add_cube_with_occlusion_rotated(st: SurfaceTool, grid_pos: Vector3i, center: Vector3, size: Vector3, tile_def: XtremeTileDefinition, rot_basis: Basis) -> void:
 	var hx := size.x * 0.5
 	var hy := size.y * 0.5
 	var hz := size.z * 0.5
 	
-	# Define 8 vertices of the cube
-	var v := [
-		center + Vector3(-hx, -hy, -hz),  # 0: back-bottom-left
-		center + Vector3( hx, -hy, -hz),  # 1: back-bottom-right
-		center + Vector3( hx,  hy, -hz),  # 2: back-top-right
-		center + Vector3(-hx,  hy, -hz),  # 3: back-top-left
-		center + Vector3(-hx, -hy,  hz),  # 4: front-bottom-left
-		center + Vector3( hx, -hy,  hz),  # 5: front-bottom-right
-		center + Vector3( hx,  hy,  hz),  # 6: front-top-right
-		center + Vector3(-hx,  hy,  hz),  # 7: front-top-left
+	# Define 8 vertices of the cube (local space, will be rotated)
+	var local_verts := [
+		Vector3(-hx, -hy, -hz),  # 0: back-bottom-left
+		Vector3( hx, -hy, -hz),  # 1: back-bottom-right
+		Vector3( hx,  hy, -hz),  # 2: back-top-right
+		Vector3(-hx,  hy, -hz),  # 3: back-top-left
+		Vector3(-hx, -hy,  hz),  # 4: front-bottom-left
+		Vector3( hx, -hy,  hz),  # 5: front-bottom-right
+		Vector3( hx,  hy,  hz),  # 6: front-top-right
+		Vector3(-hx,  hy,  hz),  # 7: front-top-left
 	]
+	
+	# Rotate vertices around center and translate to world position
+	var v: Array[Vector3] = []
+	for local_v in local_verts:
+		v.append(center + rot_basis * local_v)
 	
 	# Check each face for adjacent solid tiles
 	# Only add face if no solid tile is adjacent on that side

@@ -267,6 +267,10 @@ func _create_tile_visual(pos: Vector3i) -> void:
 	if tile_id == &"":
 		return
 	
+	# Skip multi-cell part markers
+	if tile_id == &"_multicell_part":
+		return
+	
 	var cell_size := grid_settings.get_cell_size()
 	var world_pos := grid_settings.grid_to_world(pos)
 	
@@ -302,11 +306,21 @@ func _create_tile_visual(pos: Vector3i) -> void:
 	
 	visual.position = world_pos
 	visual.name = "Tile_%d_%d_%d" % [pos.x, pos.y, pos.z]
+	
+	# Apply rotation if the level data has rotation for this tile
+	var tile_rotation := level_data.get_tile_rotation(pos)
+	if tile_rotation != Vector3i.ZERO:
+		visual.rotation_degrees = Vector3(
+			tile_rotation.x * 90.0,
+			tile_rotation.y * 90.0,
+			tile_rotation.z * 90.0
+		)
+	
 	add_child(visual)
 	_tile_instances[pos] = visual
 	
 	# Apply curved world material if preview is enabled
-	if curved_preview_enabled and visual is MeshInstance3D:
+	if (curved_preview_enabled or distance_effects_enabled) and visual is MeshInstance3D:
 		_apply_curved_material(visual as MeshInstance3D)
 
 func _remove_tile_visual(pos: Vector3i) -> void:

@@ -15,6 +15,9 @@ var _y_level_spinbox: SpinBox
 var _brush_size_spinbox: SpinBox
 var _grid_visible_check: CheckBox
 var _context_menu: PopupMenu
+var _rotation_x_spinbox: SpinBox
+var _rotation_y_spinbox: SpinBox
+var _rotation_z_spinbox: SpinBox
 
 # Scene elements
 var _grid_visualizer: XtremeGridVisualizer
@@ -34,6 +37,9 @@ var _current_y_level: int = 0
 var _brush_size: int = 1
 var _is_plugin_active: bool = false
 var _editing_enabled: bool = false
+
+# Rotation state (in 90-degree increments: 0, 1, 2, 3)
+var _current_rotation: Vector3i = Vector3i.ZERO
 
 # Drag painting state
 var _is_dragging: bool = false
@@ -525,6 +531,56 @@ func _create_editor_dock() -> void:
 	
 	content.add_child(HSeparator.new())
 	
+	# Rotation Controls
+	content.add_child(_make_label("Rotation (90° increments)"))
+	var rotation_grid := GridContainer.new()
+	rotation_grid.columns = 6
+	
+	rotation_grid.add_child(_make_label("X:"))
+	_rotation_x_spinbox = SpinBox.new()
+	_rotation_x_spinbox.name = "RotationX"
+	_rotation_x_spinbox.min_value = 0
+	_rotation_x_spinbox.max_value = 3
+	_rotation_x_spinbox.value = 0
+	_rotation_x_spinbox.custom_minimum_size.x = 50
+	_rotation_x_spinbox.value_changed.connect(_on_rotation_x_changed)
+	rotation_grid.add_child(_rotation_x_spinbox)
+	
+	rotation_grid.add_child(_make_label("Y:"))
+	_rotation_y_spinbox = SpinBox.new()
+	_rotation_y_spinbox.name = "RotationY"
+	_rotation_y_spinbox.min_value = 0
+	_rotation_y_spinbox.max_value = 3
+	_rotation_y_spinbox.value = 0
+	_rotation_y_spinbox.custom_minimum_size.x = 50
+	_rotation_y_spinbox.value_changed.connect(_on_rotation_y_changed)
+	rotation_grid.add_child(_rotation_y_spinbox)
+	
+	rotation_grid.add_child(_make_label("Z:"))
+	_rotation_z_spinbox = SpinBox.new()
+	_rotation_z_spinbox.name = "RotationZ"
+	_rotation_z_spinbox.min_value = 0
+	_rotation_z_spinbox.max_value = 3
+	_rotation_z_spinbox.value = 0
+	_rotation_z_spinbox.custom_minimum_size.x = 50
+	_rotation_z_spinbox.value_changed.connect(_on_rotation_z_changed)
+	rotation_grid.add_child(_rotation_z_spinbox)
+	
+	content.add_child(rotation_grid)
+	
+	var rotation_hint := Label.new()
+	rotation_hint.text = "(R=Y, Shift+R=X, Ctrl+R=Z)"
+	rotation_hint.add_theme_font_size_override("font_size", 11)
+	rotation_hint.add_theme_color_override("font_color", Color.GRAY)
+	content.add_child(rotation_hint)
+	
+	var reset_rotation_btn := Button.new()
+	reset_rotation_btn.text = "Reset Rotation"
+	reset_rotation_btn.pressed.connect(_reset_rotation)
+	content.add_child(reset_rotation_btn)
+	
+	content.add_child(HSeparator.new())
+	
 	# Selection Operations
 	content.add_child(_make_label("Selection"))
 	var selection_info := Label.new()
@@ -785,6 +841,44 @@ func _on_y_level_changed(value: float) -> void:
 func _on_brush_size_changed(value: float) -> void:
 	_brush_size = int(value)
 	_set_status("Brush: %dx%d" % [_brush_size, _brush_size])
+
+func _on_rotation_x_changed(value: float) -> void:
+	_current_rotation.x = int(value) % 4
+	_update_rotation_display()
+
+func _on_rotation_y_changed(value: float) -> void:
+	_current_rotation.y = int(value) % 4
+	_update_rotation_display()
+
+func _on_rotation_z_changed(value: float) -> void:
+	_current_rotation.z = int(value) % 4
+	_update_rotation_display()
+
+func _reset_rotation() -> void:
+	_current_rotation = Vector3i.ZERO
+	if _rotation_x_spinbox: _rotation_x_spinbox.value = 0
+	if _rotation_y_spinbox: _rotation_y_spinbox.value = 0
+	if _rotation_z_spinbox: _rotation_z_spinbox.value = 0
+	_set_status("Rotation reset")
+
+func _cycle_rotation_y() -> void:
+	_current_rotation.y = (_current_rotation.y + 1) % 4
+	if _rotation_y_spinbox: _rotation_y_spinbox.value = _current_rotation.y
+	_update_rotation_display()
+
+func _cycle_rotation_x() -> void:
+	_current_rotation.x = (_current_rotation.x + 1) % 4
+	if _rotation_x_spinbox: _rotation_x_spinbox.value = _current_rotation.x
+	_update_rotation_display()
+
+func _cycle_rotation_z() -> void:
+	_current_rotation.z = (_current_rotation.z + 1) % 4
+	if _rotation_z_spinbox: _rotation_z_spinbox.value = _current_rotation.z
+	_update_rotation_display()
+
+func _update_rotation_display() -> void:
+	var degrees := _current_rotation * 90
+	_set_status("Rotation: X=%d° Y=%d° Z=%d°" % [degrees.x, degrees.y, degrees.z])
 
 func _on_grid_visible_toggled(visible: bool) -> void:
 	if _grid_lines_mesh:
@@ -1524,7 +1618,7 @@ func _paint_at_single(center_pos: Vector3i) -> void:
 					_stroke_before[pos] = _current_level.get_tile(pos)
 				_stroke_affected.append(pos)
 			
-			_current_level.set_tile(pos, _selected_tile_id)
+			_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
 			_grid_visualizer.update_tile(pos)
 
 func _erase_at_single(center_pos: Vector3i) -> void:
@@ -1605,10 +1699,20 @@ func _handle_select_release(pos: Vector3i) -> void:
 	_set_status("Selected: %dx%dx%d" % [size.x, size.y, size.z])
 
 func _bucket_fill_at(start_pos: Vector3i) -> void:
-	if _current_level.has_tile(start_pos):
-		_set_status("Bucket Fill: Click on empty cell")
-		return
+	var clicked_tile := _current_level.get_tile(start_pos)
 	
+	# Determine fill mode: empty fill or tile replacement
+	if clicked_tile == &"" or clicked_tile == &"empty":
+		# Empty cell - flood fill empty space
+		_bucket_fill_empty(start_pos)
+	elif clicked_tile == _selected_tile_id:
+		# Same tile type - nothing to do
+		_set_status("Already this tile type")
+	else:
+		# Different tile type - replace connected tiles of same type
+		_bucket_fill_replace(start_pos, clicked_tile)
+
+func _bucket_fill_empty(start_pos: Vector3i) -> void:
 	var affected: Array[Vector3i] = []
 	var to_fill: Array[Vector3i] = [start_pos]
 	var visited := {}
@@ -1625,6 +1729,7 @@ func _bucket_fill_at(start_pos: Vector3i) -> void:
 		
 		affected.append(pos)
 		
+		# Only check face-adjacent neighbors (no diagonals), same Y level
 		var neighbors := [
 			Vector3i(pos.x + 1, pos.y, pos.z),
 			Vector3i(pos.x - 1, pos.y, pos.z),
@@ -1636,21 +1741,71 @@ func _bucket_fill_at(start_pos: Vector3i) -> void:
 				visited[neighbor] = true
 				to_fill.append(neighbor)
 	
+	if affected.is_empty():
+		return
+	
 	var before := _capture_tiles_in_region(affected)
 	
 	for pos in affected:
-		_current_level.set_tile(pos, _selected_tile_id)
+		_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
 		_grid_visualizer.update_tile(pos)
 	
 	var after := _capture_tiles_in_region(affected)
 	_record_undo("Bucket Fill", before, after)
 	
-	_set_status("Bucket filled %d tiles" % affected.size())
+	_set_status("Bucket filled %d empty cells" % affected.size())
+
+func _bucket_fill_replace(start_pos: Vector3i, target_tile_id: StringName) -> void:
+	var affected: Array[Vector3i] = []
+	var to_fill: Array[Vector3i] = [start_pos]
+	var visited := {}
+	visited[start_pos] = true
+	
+	while to_fill.size() > 0 and affected.size() < 10000:
+		var pos: Vector3i = to_fill.pop_front()
+		if pos.x < 0 or pos.x >= _current_level.size_x:
+			continue
+		if pos.z < 0 or pos.z >= _current_level.size_z:
+			continue
+		
+		# Only fill cells that have the target tile type
+		var tile_at_pos := _current_level.get_tile(pos)
+		if tile_at_pos != target_tile_id:
+			continue
+		
+		affected.append(pos)
+		
+		# Only check face-adjacent neighbors (no diagonals), same Y level
+		var neighbors := [
+			Vector3i(pos.x + 1, pos.y, pos.z),
+			Vector3i(pos.x - 1, pos.y, pos.z),
+			Vector3i(pos.x, pos.y, pos.z + 1),
+			Vector3i(pos.x, pos.y, pos.z - 1),
+		]
+		for neighbor in neighbors:
+			if neighbor not in visited:
+				visited[neighbor] = true
+				to_fill.append(neighbor)
+	
+	if affected.is_empty():
+		return
+	
+	var before := _capture_tiles_in_region(affected)
+	
+	for pos in affected:
+		_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
+		_grid_visualizer.update_tile(pos)
+	
+	var after := _capture_tiles_in_region(affected)
+	_record_undo("Bucket Replace", before, after)
+	
+	_set_status("Replaced %d tiles" % affected.size())
 
 # Need to finalize stroke when mouse is released
 func _input(event: InputEvent) -> void:
 	if not _editing_enabled:
 		return
+	
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
@@ -1659,3 +1814,23 @@ func _input(event: InputEvent) -> void:
 				_finalize_stroke("Paint")
 			elif _edit_mode == 1 and _stroke_affected.size() > 0:
 				_finalize_stroke("Erase")
+	
+	elif event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and not key.echo:
+			# Rotation hotkeys
+			if key.keycode == KEY_R:
+				if key.shift_pressed:
+					_cycle_rotation_x()
+				elif key.ctrl_pressed:
+					_cycle_rotation_z()
+				else:
+					_cycle_rotation_y()
+				get_viewport().set_input_as_handled()
+			# Undo/Redo
+			elif key.keycode == KEY_Z and key.ctrl_pressed:
+				if key.shift_pressed:
+					_redo()
+				else:
+					_undo()
+				get_viewport().set_input_as_handled()

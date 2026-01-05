@@ -20,6 +20,21 @@ extends Resource
 ## Icon texture for palette (optional)
 @export var icon: Texture2D
 
+@export_group("Size")
+## Size of this object in cells (for multi-cell objects)
+## Most tiles are 1x1x1, but larger objects like trees, buildings can span multiple cells
+@export var cell_size: Vector3i = Vector3i(1, 1, 1):
+	set(value):
+		cell_size = Vector3i(
+			clampi(value.x, 1, 9),
+			clampi(value.y, 1, 9),
+			clampi(value.z, 1, 9)
+		)
+
+## Whether this is a multi-cell object (calculated from cell_size)
+func is_multicell() -> bool:
+	return cell_size.x > 1 or cell_size.y > 1 or cell_size.z > 1
+
 @export_group("Visual")
 ## The scene to instantiate for this tile (contains mesh, collision, etc.)
 @export var tile_scene: PackedScene
@@ -58,6 +73,11 @@ enum TileType {
 
 ## Damage amount if hazardous
 @export var damage_amount: int = 1
+
+@export_group("Custom Properties")
+## Custom properties that can be passed to the tile scene
+## Useful for enemy patrol distance, spring force, etc.
+@export var custom_properties: Dictionary = {}
 
 @export_group("Generation")
 ## Weight for procedural placement (higher = more likely to be placed)
@@ -108,3 +128,17 @@ func _get_opposite_face(face: String) -> String:
 ## Check if this tile matches a theme
 func matches_theme(theme: String) -> bool:
 	return theme_tags.is_empty() or theme in theme_tags
+
+## Get the footprint size after rotation
+func get_rotated_size(rotation: Vector3i) -> Vector3i:
+	var result := cell_size
+	# Apply Y rotation (most common)
+	if rotation.y % 2 == 1:  # 90 or 270 degrees
+		result = Vector3i(result.z, result.y, result.x)
+	# Apply X rotation
+	if rotation.x % 2 == 1:
+		result = Vector3i(result.x, result.z, result.y)
+	# Apply Z rotation
+	if rotation.z % 2 == 1:
+		result = Vector3i(result.y, result.x, result.z)
+	return result

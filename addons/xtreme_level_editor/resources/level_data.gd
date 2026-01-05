@@ -25,6 +25,14 @@ extends Resource
 ## Only non-empty cells are stored
 var _grid_data: Dictionary = {}
 
+## Rotation data - stored separately for tiles that have non-zero rotation
+## Key: "x,y,z" string, Value: Vector3i (rotation in 90-degree increments: 0,1,2,3 for each axis)
+var _rotation_data: Dictionary = {}
+
+## Multi-cell object anchors - tracks which cells belong to multi-cell objects
+## Key: "x,y,z" string (anchor position), Value: Dictionary with size and occupied cells
+var _multicell_data: Dictionary = {}
+
 ## Connection point markers for chunk system
 ## Array of ConnectionPoint data
 @export var connection_points: Array[Dictionary] = []
@@ -39,8 +47,8 @@ func initialize(settings: XtremeGridSettings) -> void:
 		creation_date = Time.get_datetime_string_from_system()
 	_update_modified_time()
 
-## Set a tile at grid coordinates
-func set_tile(pos: Vector3i, tile_id: StringName) -> void:
+## Set a tile at grid coordinates with optional rotation
+func set_tile(pos: Vector3i, tile_id: StringName, rotation: Vector3i = Vector3i.ZERO) -> void:
 	if not _is_valid_position(pos):
 		push_warning("Position %s is outside level bounds" % pos)
 		return
@@ -50,8 +58,14 @@ func set_tile(pos: Vector3i, tile_id: StringName) -> void:
 	if tile_id == &"" or tile_id == &"empty":
 		# Remove tile (empty space)
 		_grid_data.erase(key)
+		_rotation_data.erase(key)
 	else:
 		_grid_data[key] = tile_id
+		# Only store rotation if non-zero
+		if rotation != Vector3i.ZERO:
+			_rotation_data[key] = rotation
+		else:
+			_rotation_data.erase(key)
 	
 	_update_modified_time()
 	emit_changed()
@@ -64,6 +78,14 @@ func get_tile(pos: Vector3i) -> StringName:
 	var key := _pos_to_key(pos)
 	return _grid_data.get(key, &"")
 
+## Get the rotation at grid coordinates (in 90-degree increments)
+func get_tile_rotation(pos: Vector3i) -> Vector3i:
+	if not _is_valid_position(pos):
+		return Vector3i.ZERO
+	
+	var key := _pos_to_key(pos)
+	return _rotation_data.get(key, Vector3i.ZERO)
+
 ## Check if a position has a tile
 func has_tile(pos: Vector3i) -> bool:
 	return get_tile(pos) != &""
@@ -75,6 +97,8 @@ func clear_tile(pos: Vector3i) -> void:
 ## Clear all tiles
 func clear_all() -> void:
 	_grid_data.clear()
+	_rotation_data.clear()
+	_multicell_data.clear()
 	_update_modified_time()
 	emit_changed()
 
@@ -92,6 +116,111 @@ func get_tiles_of_type(tile_id: StringName) -> Array[Vector3i]:
 		if _grid_data[key] == tile_id:
 			positions.append(_key_to_pos(key))
 	return positions
+
+## Set a multi-cell object at anchor position
+func set_multicell_object(anchor_pos: Vector3i, tile_id: StringName, size: Vector3i, rotation: Vector3i = Vector3i.ZERO) -> bool:
+	# Calculate rotated size
+	var rotated_size := _get_rotated_size(size, rotation)
+	
+	# Check if all cells are available
+	for x in range(rotated_size.x):
+		for y in range(rotated_size.y):
+			for z in range(rotated_size.z):
+				var check_pos := anchor_pos + Vector3i(x, y, z)
+				if not _is_valid_position(check_pos):
+					return false
+				if has_tile(check_pos):
+					return false
+	
+	# Place the anchor
+	var anchor_key := _pos_to_key(anchor_pos)
+	_grid_data[anchor_key] = tile_id
+	if rotation != Vector3i.ZERO:
+		_rotation_data[anchor_key] = rotation
+	
+	# Store multi-cell data
+	var occupied_cells: Array[Vector3i] = []
+	for x in range(rotated_size.x):
+		for y in range(rotated_size.y):
+			for z in range(rotated_size.z):
+				var cell_pos := anchor_pos + Vector3i(x, y, z)
+				occupied_cells.append(cell_pos)
+				if cell_pos != anchor_pos:
+					# Mark non-anchor cells as occupied by this object
+					var cell_key := _pos_to_key(cell_pos)
+					_grid_data[cell_key] = &"_multicell_part"  # Special marker
+	
+	_multicell_data[anchor_key] = {
+		"size": size,
+		"rotated_size": rotated_size,
+		"rotation": rotation,
+		"cells": occupied_cells
+	}
+	
+	_update_modified_time()
+	emit_changed()
+	return true
+
+## Get multi-cell object data at a position (returns anchor data if pos is part of multi-cell)
+func get_multicell_at(pos: Vector3i) -> Dictionary:
+	var key := _pos_to_key(pos)
+	
+	# Check if this is an anchor
+	if key in _multicell_data:
+		return _multicell_data[key]
+	
+	# Check if this is part of a multi-cell object
+	for anchor_key in _multicell_data.keys():
+		var data: Dictionary = _multicell_data[anchor_key]
+		var cells: Array = data.get("cells", [])
+		for cell in cells:
+			if cell == pos:
+				var result := data.duplicate()
+				result["anchor"] = _key_to_pos(anchor_key)
+				return result
+	
+	return {}
+
+## Remove a multi-cell object (given any cell position that's part of it)
+func remove_multicell_at(pos: Vector3i) -> void:
+	var data := get_multicell_at(pos)
+	if data.is_empty():
+		return
+	
+	var anchor: Vector3i
+	if data.has("anchor"):
+		anchor = data["anchor"]
+	else:
+		anchor = pos
+	
+	var anchor_key := _pos_to_key(anchor)
+	if anchor_key in _multicell_data:
+		var cells: Array = _multicell_data[anchor_key].get("cells", [])
+		for cell in cells:
+			var cell_key := _pos_to_key(cell)
+			_grid_data.erase(cell_key)
+			_rotation_data.erase(cell_key)
+		_multicell_data.erase(anchor_key)
+	
+	_update_modified_time()
+	emit_changed()
+
+## Check if a position is part of a multi-cell object
+func is_multicell_part(pos: Vector3i) -> bool:
+	return not get_multicell_at(pos).is_empty()
+
+func _get_rotated_size(size: Vector3i, rotation: Vector3i) -> Vector3i:
+	var result := size
+	# Apply Y rotation (most common)
+	if rotation.y % 2 == 1:  # 90 or 270 degrees
+		result = Vector3i(result.z, result.y, result.x)
+	# Apply X rotation
+	if rotation.x % 2 == 1:
+		result = Vector3i(result.x, result.z, result.y)
+	# Apply Z rotation
+	if rotation.z % 2 == 1:
+		result = Vector3i(result.y, result.x, result.z)
+	return result
 
 ## Get the bounds of actual content (not level size)
 func get_content_bounds() -> AABB:
@@ -122,6 +251,7 @@ func get_content_bounds() -> AABB:
 ## Copy a region of the grid (for chunk operations)
 func copy_region(start: Vector3i, end: Vector3i) -> Dictionary:
 	var region_data := {}
+	var region_rotations := {}
 	
 	var min_pos := Vector3i(
 		mini(start.x, end.x),
@@ -140,25 +270,31 @@ func copy_region(start: Vector3i, end: Vector3i) -> Dictionary:
 				var pos := Vector3i(x, y, z)
 				var tile_id := get_tile(pos)
 				if tile_id != &"":
-					# Store relative position
 					var rel_pos := pos - min_pos
-					region_data[_pos_to_key(rel_pos)] = tile_id
+					var rel_key := _pos_to_key(rel_pos)
+					region_data[rel_key] = tile_id
+					var rot := get_tile_rotation(pos)
+					if rot != Vector3i.ZERO:
+						region_rotations[rel_key] = rot
 	
 	return {
 		"size": max_pos - min_pos + Vector3i.ONE,
-		"tiles": region_data
+		"tiles": region_data,
+		"rotations": region_rotations
 	}
 
 ## Paste a region into the grid
 func paste_region(region: Dictionary, position: Vector3i, overwrite: bool = true) -> void:
 	var tiles: Dictionary = region.get("tiles", {})
+	var rotations: Dictionary = region.get("rotations", {})
 	
 	for key in tiles.keys():
 		var rel_pos := _key_to_pos(key)
 		var abs_pos := rel_pos + position
 		
 		if overwrite or not has_tile(abs_pos):
-			set_tile(abs_pos, tiles[key])
+			var rot: Vector3i = rotations.get(key, Vector3i.ZERO)
+			set_tile(abs_pos, tiles[key], rot)
 
 ## Resize the level bounds
 func resize(new_x: int, new_y: int, new_z: int) -> void:
@@ -175,6 +311,7 @@ func resize(new_x: int, new_y: int, new_z: int) -> void:
 	
 	for key in keys_to_remove:
 		_grid_data.erase(key)
+		_rotation_data.erase(key)
 	
 	_update_modified_time()
 	emit_changed()
@@ -183,8 +320,8 @@ func resize(new_x: int, new_y: int, new_z: int) -> void:
 func add_connection_point(position: Vector3i, direction: Vector3i, tags: PackedStringArray = []) -> void:
 	connection_points.append({
 		"position": position,
-		"direction": direction,  # Which face the connection is on
-		"tags": tags,            # For matching compatible connections
+		"direction": direction,
+		"tags": tags,
 		"id": _generate_connection_id()
 	})
 	emit_changed()
@@ -234,9 +371,21 @@ func _generate_connection_id() -> String:
 # ============ Serialization ============
 
 func _get_property_list() -> Array[Dictionary]:
-	# Expose _grid_data for saving
-	return [{
-		"name": "_grid_data",
-		"type": TYPE_DICTIONARY,
-		"usage": PROPERTY_USAGE_STORAGE
-	}]
+	# Expose internal data for saving
+	return [
+		{
+			"name": "_grid_data",
+			"type": TYPE_DICTIONARY,
+			"usage": PROPERTY_USAGE_STORAGE
+		},
+		{
+			"name": "_rotation_data",
+			"type": TYPE_DICTIONARY,
+			"usage": PROPERTY_USAGE_STORAGE
+		},
+		{
+			"name": "_multicell_data",
+			"type": TYPE_DICTIONARY,
+			"usage": PROPERTY_USAGE_STORAGE
+		}
+	]
