@@ -69,6 +69,13 @@ func _enter_tree() -> void:
 	_create_editor_dock()
 	_create_context_menu()
 	_is_plugin_active = true
+	
+	# Connect to scene change signal to handle persistence
+	EditorInterface.get_editor_main_screen().get_parent().child_entered_tree.connect(_on_scene_changed)
+	
+	# Try to recover existing visualizer if present
+	call_deferred("_try_recover_existing_visualizer")
+	
 	print("[%s] Plugin initialized" % PLUGIN_NAME)
 
 func _exit_tree() -> void:
@@ -107,6 +114,62 @@ func _cleanup_visualizer() -> void:
 	if _select_preview_mesh and is_instance_valid(_select_preview_mesh):
 		_select_preview_mesh.queue_free()
 		_select_preview_mesh = null
+
+func _on_scene_changed(_node: Node) -> void:
+	# When scene changes, clean up any old temp nodes and reset state
+	call_deferred("_on_scene_loaded")
+
+func _on_scene_loaded() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+	
+	# Clean up any leftover TEMP nodes from previous session
+	_cleanup_leftover_temp_nodes(scene_root)
+	
+	# Reset our references since temp nodes don't persist
+	_grid_visualizer = null
+	_grid_lines_mesh = null
+	_selection_box_mesh = null
+	_brush_preview_mesh = null
+	_rect_preview_mesh = null
+	_select_preview_mesh = null
+	
+	# Check if there's saved level data we should offer to load
+	# (This would be a .tres file, not embedded nodes)
+	_set_status("Scene loaded - Enable editing and click New/Load")
+
+func _cleanup_leftover_temp_nodes(root: Node) -> void:
+	# Remove any TEMP nodes that might have been left behind
+	var nodes_to_remove: Array[Node] = []
+	_find_temp_nodes(root, nodes_to_remove)
+	for node in nodes_to_remove:
+		node.queue_free()
+
+func _find_temp_nodes(node: Node, result: Array[Node]) -> void:
+	if node.name.ends_with("_TEMP"):
+		result.append(node)
+	for child in node.get_children():
+		_find_temp_nodes(child, result)
+
+func _try_recover_existing_visualizer() -> void:
+	# This is now mainly for cleanup - temp nodes shouldn't persist
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+	
+	# Clean up any old saved nodes (from before this fix)
+	_cleanup_old_saved_nodes(scene_root)
+
+func _cleanup_old_saved_nodes(root: Node) -> void:
+	# Remove old-style saved nodes (without _TEMP suffix) that cause conflicts
+	var old_names := ["XtremeGridVisualizer", "XtremeGridLines", "XtremeSelectionBox", 
+					  "XtremeBrushPreview", "XtremeRectPreview", "XtremeSelectPreview"]
+	for old_name in old_names:
+		var old_node := root.find_child(old_name, true, false)
+		if old_node:
+			print("[%s] Removing old saved node: %s" % [PLUGIN_NAME, old_name])
+			old_node.queue_free()
 
 func _register_custom_types() -> void:
 	add_custom_type("XtremeGridSettings", "Resource",
@@ -601,6 +664,57 @@ func _create_editor_dock() -> void:
 	intensity_hbox.add_child(intensity)
 	content.add_child(intensity_hbox)
 	
+	# Distance Effects
+	content.add_child(_make_label("Distance Effects"))
+	var dist_effects_check := CheckBox.new()
+	dist_effects_check.name = "DistanceEffectsEnabled"
+	dist_effects_check.text = "Enable Wireframe + Dissolve"
+	dist_effects_check.button_pressed = true
+	dist_effects_check.toggled.connect(_on_distance_effects_toggled)
+	content.add_child(dist_effects_check)
+	
+	# Effect max distance
+	var dist_hbox := HBoxContainer.new()
+	dist_hbox.add_child(_make_label("Max Dist:"))
+	var dist_slider := HSlider.new()
+	dist_slider.name = "EffectMaxDistance"
+	dist_slider.min_value = 20.0
+	dist_slider.max_value = 300.0
+	dist_slider.step = 5.0
+	dist_slider.value = 150.0
+	dist_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dist_slider.value_changed.connect(_on_effect_distance_changed)
+	dist_hbox.add_child(dist_slider)
+	content.add_child(dist_hbox)
+	
+	# Wireframe start
+	var wire_hbox := HBoxContainer.new()
+	wire_hbox.add_child(_make_label("Wire Start:"))
+	var wire_slider := HSlider.new()
+	wire_slider.name = "WireframeStart"
+	wire_slider.min_value = 0.0
+	wire_slider.max_value = 1.0
+	wire_slider.step = 0.05
+	wire_slider.value = 0.3
+	wire_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wire_slider.value_changed.connect(_on_wireframe_start_changed)
+	wire_hbox.add_child(wire_slider)
+	content.add_child(wire_hbox)
+	
+	# Dissolve start
+	var dissolve_hbox := HBoxContainer.new()
+	dissolve_hbox.add_child(_make_label("Dissolve:"))
+	var dissolve_slider := HSlider.new()
+	dissolve_slider.name = "DissolveStart"
+	dissolve_slider.min_value = 0.0
+	dissolve_slider.max_value = 1.0
+	dissolve_slider.step = 0.05
+	dissolve_slider.value = 0.3
+	dissolve_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dissolve_slider.value_changed.connect(_on_dissolve_start_changed)
+	dissolve_hbox.add_child(dissolve_slider)
+	content.add_child(dissolve_hbox)
+	
 	content.add_child(HSeparator.new())
 	
 	# Export
@@ -1066,10 +1180,32 @@ func _export_level_file(path: String) -> void:
 	exporter.grid_settings = _grid_settings
 	exporter.tile_palette = _current_palette
 	exporter.level_data = _current_level
+	
+	# Curved world settings
 	var curve_check := _main_dock.find_child("ExportWithCurve", true, false) as CheckBox
 	exporter.apply_curved_world = curve_check.button_pressed if curve_check else true
 	var intensity := _main_dock.find_child("CurveIntensity", true, false) as HSlider
 	exporter.curve_intensity = intensity.value if intensity else 0.01
+	
+	# Distance effect settings
+	var dist_check := _main_dock.find_child("DistanceEffectsEnabled", true, false) as CheckBox
+	exporter.distance_effects_enabled = dist_check.button_pressed if dist_check else true
+	
+	var max_dist := _main_dock.find_child("EffectMaxDistance", true, false) as HSlider
+	exporter.effect_max_distance = max_dist.value if max_dist else 150.0
+	
+	var wire_start := _main_dock.find_child("WireframeStart", true, false) as HSlider
+	exporter.wireframe_start = wire_start.value if wire_start else 0.3
+	
+	# wireframe_full is calculated based on wireframe_start + 0.4 (gradual transition)
+	exporter.wireframe_full = (wire_start.value + 0.4) if wire_start else 0.7
+	
+	var diss_start := _main_dock.find_child("DissolveStart", true, false) as HSlider
+	exporter.dissolve_start = diss_start.value if diss_start else 0.3
+	
+	# dissolve_full is calculated based on dissolve_start + 0.6 (gradual transition)
+	exporter.dissolve_full = (diss_start.value + 0.6) if diss_start else 0.9
+	
 	var err := exporter.export_level(path)
 	if err == OK:
 		_set_status("Exported: %s" % path.get_file())
@@ -1102,6 +1238,34 @@ func _on_curve_intensity_changed(value: float) -> void:
 		if curve_check and curve_check.button_pressed:
 			_grid_visualizer.rebuild()
 
+func _on_distance_effects_toggled(enabled: bool) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.distance_effects_enabled = enabled
+		_grid_visualizer.rebuild()
+
+func _on_effect_distance_changed(value: float) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.effect_max_distance = value
+		_rebuild_if_effects_enabled()
+
+func _on_wireframe_start_changed(value: float) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.wireframe_start = value
+		_rebuild_if_effects_enabled()
+
+func _on_dissolve_start_changed(value: float) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.dissolve_start = value
+		_rebuild_if_effects_enabled()
+
+func _rebuild_if_effects_enabled() -> void:
+	if not _grid_visualizer:
+		return
+	var dist_check := _main_dock.find_child("DistanceEffectsEnabled", true, false) as CheckBox
+	var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
+	if (dist_check and dist_check.button_pressed) or (curve_check and curve_check.button_pressed):
+		_grid_visualizer.rebuild()
+
 # ============ Visualizer ============
 
 func _create_or_update_visualizer() -> void:
@@ -1111,12 +1275,12 @@ func _create_or_update_visualizer() -> void:
 		return
 	_cleanup_visualizer()
 	_grid_visualizer = XtremeGridVisualizer.new()
-	_grid_visualizer.name = "XtremeGridVisualizer"
+	_grid_visualizer.name = "XtremeGridVisualizer_TEMP"  # Mark as temporary
 	_grid_visualizer.grid_settings = _grid_settings
 	_grid_visualizer.level_data = _current_level
 	_grid_visualizer.tile_palette = _current_palette
 	scene_root.add_child(_grid_visualizer)
-	_grid_visualizer.owner = scene_root
+	# Do NOT set owner - this prevents saving with scene
 	_create_grid_lines(scene_root)
 	_create_selection_box(scene_root)
 	_create_brush_preview(scene_root)
@@ -1125,19 +1289,19 @@ func _create_or_update_visualizer() -> void:
 
 func _create_grid_lines(parent: Node) -> void:
 	_grid_lines_mesh = MeshInstance3D.new()
-	_grid_lines_mesh.name = "XtremeGridLines"
+	_grid_lines_mesh.name = "XtremeGridLines_TEMP"
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(0.3, 0.6, 1.0, 0.4)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_grid_lines_mesh.material_override = mat
 	parent.add_child(_grid_lines_mesh)
-	_grid_lines_mesh.owner = parent
+	# Do NOT set owner - this prevents saving with scene
 	_update_grid_lines()
 
 func _create_selection_box(parent: Node) -> void:
 	_selection_box_mesh = MeshInstance3D.new()
-	_selection_box_mesh.name = "XtremeSelectionBox"
+	_selection_box_mesh.name = "XtremeSelectionBox_TEMP"
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(1.0, 1.0, 0.0, 0.3)
@@ -1145,11 +1309,11 @@ func _create_selection_box(parent: Node) -> void:
 	_selection_box_mesh.material_override = mat
 	_selection_box_mesh.visible = false
 	parent.add_child(_selection_box_mesh)
-	_selection_box_mesh.owner = parent
+	# Do NOT set owner - this prevents saving with scene
 
 func _create_brush_preview(parent: Node) -> void:
 	_brush_preview_mesh = MeshInstance3D.new()
-	_brush_preview_mesh.name = "XtremeBrushPreview"
+	_brush_preview_mesh.name = "XtremeBrushPreview_TEMP"
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(0.0, 1.0, 0.5, 0.25)
@@ -1157,11 +1321,11 @@ func _create_brush_preview(parent: Node) -> void:
 	_brush_preview_mesh.material_override = mat
 	_brush_preview_mesh.visible = false
 	parent.add_child(_brush_preview_mesh)
-	_brush_preview_mesh.owner = parent
+	# Do NOT set owner - this prevents saving with scene
 
 func _create_rect_preview(parent: Node) -> void:
 	_rect_preview_mesh = MeshInstance3D.new()
-	_rect_preview_mesh.name = "XtremeRectPreview"
+	_rect_preview_mesh.name = "XtremeRectPreview_TEMP"
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(0.5, 0.3, 1.0, 0.35)
@@ -1169,11 +1333,11 @@ func _create_rect_preview(parent: Node) -> void:
 	_rect_preview_mesh.material_override = mat
 	_rect_preview_mesh.visible = false
 	parent.add_child(_rect_preview_mesh)
-	_rect_preview_mesh.owner = parent
+	# Do NOT set owner - this prevents saving with scene
 
 func _create_select_preview(parent: Node) -> void:
 	_select_preview_mesh = MeshInstance3D.new()
-	_select_preview_mesh.name = "XtremeSelectPreview"
+	_select_preview_mesh.name = "XtremeSelectPreview_TEMP"
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color(1.0, 0.9, 0.2, 0.35)  # Yellow-ish for select
@@ -1181,7 +1345,7 @@ func _create_select_preview(parent: Node) -> void:
 	_select_preview_mesh.material_override = mat
 	_select_preview_mesh.visible = false
 	parent.add_child(_select_preview_mesh)
-	_select_preview_mesh.owner = parent
+	# Do NOT set owner - this prevents saving with scene
 
 func _update_grid_lines() -> void:
 	if not _grid_lines_mesh or not _current_level or not _grid_settings:

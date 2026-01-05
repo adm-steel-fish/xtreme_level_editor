@@ -82,6 +82,43 @@ signal cell_hovered(position: Vector3i)
 		curve_center = value
 		_update_curved_world()
 
+@export_group("Distance Effects")
+## Enable distance-based wireframe and dissolve effects
+@export var distance_effects_enabled: bool = true:
+	set(value):
+		distance_effects_enabled = value
+		_update_curved_world()
+
+## Maximum distance for effects
+@export var effect_max_distance: float = 150.0:
+	set(value):
+		effect_max_distance = value
+		_update_curved_world()
+
+## Distance ratio at which wireframe starts appearing (0-1)
+@export_range(0.0, 1.0, 0.05) var wireframe_start: float = 0.3:
+	set(value):
+		wireframe_start = value
+		_update_curved_world()
+
+## Distance ratio at which wireframe is fully visible (0-1)
+@export_range(0.0, 1.0, 0.05) var wireframe_full: float = 0.7:
+	set(value):
+		wireframe_full = value
+		_update_curved_world()
+
+## Distance ratio at which dissolve starts (0-1)
+@export_range(0.0, 1.0, 0.05) var dissolve_start: float = 0.3:
+	set(value):
+		dissolve_start = value
+		_update_curved_world()
+
+## Distance ratio at which fully dissolved (0-1)
+@export_range(0.0, 1.0, 0.05) var dissolve_full: float = 0.9:
+	set(value):
+		dissolve_full = value
+		_update_curved_world()
+
 @export_group("Performance")
 ## Chunk size for rendering (in cells)
 @export var render_chunk_size: int = 16
@@ -296,16 +333,25 @@ func _update_curved_world() -> void:
 	if not _curved_world_material:
 		return
 	
+	# Curvature settings
 	_curved_world_material.set_shader_parameter("curve_enabled", curved_preview_enabled)
 	_curved_world_material.set_shader_parameter("curve_intensity", curve_intensity)
 	_curved_world_material.set_shader_parameter("curve_mode", curve_mode)
 	_curved_world_material.set_shader_parameter("curve_center", curve_center)
 	
+	# Distance effect settings
+	_curved_world_material.set_shader_parameter("distance_effects_enabled", distance_effects_enabled)
+	_curved_world_material.set_shader_parameter("effect_max_distance", effect_max_distance)
+	_curved_world_material.set_shader_parameter("wireframe_start", wireframe_start)
+	_curved_world_material.set_shader_parameter("wireframe_full", wireframe_full)
+	_curved_world_material.set_shader_parameter("dissolve_start", dissolve_start)
+	_curved_world_material.set_shader_parameter("dissolve_full", dissolve_full)
+	
 	# Update all tile visuals
 	for pos in _tile_instances.keys():
 		var visual: Node3D = _tile_instances[pos]
 		if visual is MeshInstance3D:
-			if curved_preview_enabled:
+			if curved_preview_enabled or distance_effects_enabled:
 				_apply_curved_material(visual as MeshInstance3D)
 			else:
 				_remove_curved_material(visual as MeshInstance3D)
@@ -318,9 +364,26 @@ func _apply_curved_material(mesh_instance: MeshInstance3D) -> void:
 	var current_mat := mesh_instance.material_override
 	if current_mat is StandardMaterial3D:
 		var curved_mat := _curved_world_material.duplicate() as ShaderMaterial
+		
+		# Appearance from original material
 		curved_mat.set_shader_parameter("albedo", current_mat.albedo_color)
 		curved_mat.set_shader_parameter("roughness", current_mat.roughness)
 		curved_mat.set_shader_parameter("metallic", current_mat.metallic)
+		
+		# Curvature settings
+		curved_mat.set_shader_parameter("curve_enabled", curved_preview_enabled)
+		curved_mat.set_shader_parameter("curve_intensity", curve_intensity)
+		curved_mat.set_shader_parameter("curve_mode", curve_mode)
+		curved_mat.set_shader_parameter("curve_center", curve_center)
+		
+		# Distance effect settings
+		curved_mat.set_shader_parameter("distance_effects_enabled", distance_effects_enabled)
+		curved_mat.set_shader_parameter("effect_max_distance", effect_max_distance)
+		curved_mat.set_shader_parameter("wireframe_start", wireframe_start)
+		curved_mat.set_shader_parameter("wireframe_full", wireframe_full)
+		curved_mat.set_shader_parameter("dissolve_start", dissolve_start)
+		curved_mat.set_shader_parameter("dissolve_full", dissolve_full)
+		
 		mesh_instance.set_meta("original_material", current_mat)
 		mesh_instance.material_override = curved_mat
 

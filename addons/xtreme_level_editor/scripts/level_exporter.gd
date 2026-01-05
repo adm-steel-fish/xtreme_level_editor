@@ -2,18 +2,34 @@
 class_name XtremeLevelExporter
 extends RefCounted
 
-## Optimized Level Exporter with Mesh Batching
-## Combines tiles of the same type into single meshes for much better performance
+## Optimized Level Exporter
+## Features:
+## - Mesh batching (tiles of same type combined)
+## - Hidden face removal (no faces between adjacent solid blocks)
+## - Expanded AABB (prevents frustum culling issues with curved shader)
+## - Support for new shader parameters (wireframe, dissolve)
 
 var grid_settings: XtremeGridSettings
 var tile_palette: XtremeTilePalette
 var level_data: XtremeLevelData
 
+# Curved world settings
 var apply_curved_world: bool = true
 var curve_intensity: float = 0.01
 
+# Distance effect settings
+var distance_effects_enabled: bool = true
+var effect_max_distance: float = 150.0
+var wireframe_start: float = 0.3
+var wireframe_full: float = 0.7
+var dissolve_start: float = 0.3
+var dissolve_full: float = 0.9
+
 # Cached materials - shared across all tiles of same type
 var _material_cache: Dictionary = {}
+
+# Tile position lookup for hidden face removal
+var _tile_positions: Dictionary = {}
 
 func export_level(path: String) -> Error:
 	if not level_data or not grid_settings or not tile_palette:
@@ -23,11 +39,17 @@ func export_level(path: String) -> Error:
 	var root := Node3D.new()
 	root.name = level_data.level_name.replace(" ", "_")
 	
+	# Build tile position lookup for hidden face detection
+	_tile_positions.clear()
+	var all_positions := level_data.get_all_tile_positions()
+	for tile_pos in all_positions:
+		_tile_positions[tile_pos] = level_data.get_tile(tile_pos)
+	
 	# Group tiles by type for batching
 	var tiles_by_type: Dictionary = {}
 	
-	for tile_pos in level_data.tiles.keys():
-		var tile_id: StringName = level_data.tiles[tile_pos]
+	for tile_pos in all_positions:
+		var tile_id: StringName = level_data.get_tile(tile_pos)
 		if tile_id not in tiles_by_type:
 			tiles_by_type[tile_id] = []
 		tiles_by_type[tile_id].append(tile_pos)
@@ -47,7 +69,7 @@ func export_level(path: String) -> Error:
 			root.add_child(batched_mesh)
 			batched_mesh.owner = root
 	
-	# Add collision - single merged collision shape
+	# Add collision
 	var collision_body := _create_collision_body()
 	if collision_body:
 		root.add_child(collision_body)
@@ -65,8 +87,9 @@ func export_level(path: String) -> Error:
 	err = ResourceSaver.save(packed, path)
 	root.queue_free()
 	
-	# Clear material cache after export
+	# Clear caches
 	_material_cache.clear()
+	_tile_positions.clear()
 	
 	return err
 
@@ -80,20 +103,41 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 	var surface_tool := SurfaceTool.new()
 	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
+	# Track bounds for custom AABB
+	var min_bounds := Vector3(INF, INF, INF)
+	var max_bounds := Vector3(-INF, -INF, -INF)
+	
 	for pos in positions:
 		var world_pos := Vector3(
 			pos.x * cell_size.x + cell_size.x * 0.5,
 			pos.y * cell_size.y + cell_size.y * 0.5,
 			pos.z * cell_size.z + cell_size.z * 0.5
 		)
-		_add_cube_to_surface(surface_tool, world_pos, cell_size)
+		
+		# Update bounds
+		min_bounds = min_bounds.min(world_pos - cell_size * 0.5)
+		max_bounds = max_bounds.max(world_pos + cell_size * 0.5)
+		
+		# Add cube with hidden face removal
+		_add_cube_with_occlusion(surface_tool, pos, world_pos, cell_size, tile_def)
 	
 	surface_tool.generate_normals()
 	var array_mesh := surface_tool.commit()
 	
+	if array_mesh.get_surface_count() == 0:
+		return null
+	
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = str(tile_def.tile_id) + "_batch"
 	mesh_instance.mesh = array_mesh
+	
+	# Set expanded custom AABB to prevent frustum culling issues
+	# The curved shader can push vertices significantly, so we expand the bounds
+	var aabb_expansion := curve_intensity * effect_max_distance * effect_max_distance * 2.0
+	var expanded_min := min_bounds - Vector3(aabb_expansion, aabb_expansion, aabb_expansion)
+	var expanded_max := max_bounds + Vector3(aabb_expansion, aabb_expansion, aabb_expansion)
+	var custom_aabb := AABB(expanded_min, expanded_max - expanded_min)
+	mesh_instance.custom_aabb = custom_aabb
 	
 	# Get or create shared material for this tile type
 	var material := _get_or_create_material(tile_def)
@@ -101,7 +145,7 @@ func _create_batched_mesh(positions: Array, tile_def: XtremeTileDefinition) -> M
 	
 	return mesh_instance
 
-func _add_cube_to_surface(st: SurfaceTool, center: Vector3, size: Vector3) -> void:
+func _add_cube_with_occlusion(st: SurfaceTool, grid_pos: Vector3i, center: Vector3, size: Vector3, tile_def: XtremeTileDefinition) -> void:
 	var hx := size.x * 0.5
 	var hy := size.y * 0.5
 	var hz := size.z * 0.5
@@ -118,27 +162,72 @@ func _add_cube_to_surface(st: SurfaceTool, center: Vector3, size: Vector3) -> vo
 		center + Vector3(-hx,  hy,  hz),  # 7: front-top-left
 	]
 	
-	# Front face (z+)
-	_add_quad(st, v[4], v[5], v[6], v[7])
-	# Back face (z-)
-	_add_quad(st, v[1], v[0], v[3], v[2])
-	# Top face (y+)
-	_add_quad(st, v[7], v[6], v[2], v[3])
-	# Bottom face (y-)
-	_add_quad(st, v[0], v[1], v[5], v[4])
-	# Right face (x+)
-	_add_quad(st, v[5], v[1], v[2], v[6])
-	# Left face (x-)
-	_add_quad(st, v[0], v[4], v[7], v[3])
+	# Check each face for adjacent solid tiles
+	# Only add face if no solid tile is adjacent on that side
+	# Winding order is counter-clockwise when viewed from outside (front face)
+	
+	# Front face (z+) - visible from +Z direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(0, 0, 1)):
+		_add_quad(st, v[4], v[7], v[6], v[5])  # CCW from front
+	
+	# Back face (z-) - visible from -Z direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(0, 0, -1)):
+		_add_quad(st, v[1], v[2], v[3], v[0])  # CCW from back
+	
+	# Top face (y+) - visible from +Y direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(0, 1, 0)):
+		_add_quad(st, v[3], v[2], v[6], v[7])  # CCW from top
+	
+	# Bottom face (y-) - visible from -Y direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(0, -1, 0)):
+		_add_quad(st, v[0], v[4], v[5], v[1])  # CCW from bottom
+	
+	# Right face (x+) - visible from +X direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(1, 0, 0)):
+		_add_quad(st, v[1], v[5], v[6], v[2])  # CCW from right
+	
+	# Left face (x-) - visible from -X direction
+	if not _has_solid_neighbor(grid_pos, Vector3i(-1, 0, 0)):
+		_add_quad(st, v[0], v[3], v[7], v[4])  # CCW from left
+
+func _has_solid_neighbor(pos: Vector3i, offset: Vector3i) -> bool:
+	var neighbor_pos := pos + offset
+	
+	# Check if there's a tile at the neighbor position
+	if neighbor_pos not in _tile_positions:
+		return false
+	
+	# Get the tile definition to check if it's solid
+	var neighbor_tile_id: StringName = _tile_positions[neighbor_pos]
+	var neighbor_def := _get_tile_definition(neighbor_tile_id)
+	
+	# If tile exists and is solid, the face is hidden
+	if neighbor_def and neighbor_def.is_solid:
+		return true
+	
+	return false
 
 func _add_quad(st: SurfaceTool, v0: Vector3, v1: Vector3, v2: Vector3, v3: Vector3) -> void:
+	# Add UV coordinates for texture mapping
+	var uv0 := Vector2(0.0, 0.0)
+	var uv1 := Vector2(1.0, 0.0)
+	var uv2 := Vector2(1.0, 1.0)
+	var uv3 := Vector2(0.0, 1.0)
+	
 	# Triangle 1
+	st.set_uv(uv0)
 	st.add_vertex(v0)
+	st.set_uv(uv1)
 	st.add_vertex(v1)
+	st.set_uv(uv2)
 	st.add_vertex(v2)
+	
 	# Triangle 2
+	st.set_uv(uv0)
 	st.add_vertex(v0)
+	st.set_uv(uv2)
 	st.add_vertex(v2)
+	st.set_uv(uv3)
 	st.add_vertex(v3)
 
 func _get_or_create_material(tile_def: XtremeTileDefinition) -> Material:
@@ -154,9 +243,23 @@ func _get_or_create_material(tile_def: XtremeTileDefinition) -> Material:
 		if shader:
 			var shader_mat := ShaderMaterial.new()
 			shader_mat.shader = shader
+			
+			# Appearance
 			shader_mat.set_shader_parameter("albedo", tile_def.editor_color)
+			
+			# Curvature settings
 			shader_mat.set_shader_parameter("curve_intensity", curve_intensity)
 			shader_mat.set_shader_parameter("curve_enabled", true)
+			
+			# Distance effect settings
+			shader_mat.set_shader_parameter("distance_effects_enabled", distance_effects_enabled)
+			shader_mat.set_shader_parameter("effect_max_distance", effect_max_distance)
+			shader_mat.set_shader_parameter("wireframe_start", wireframe_start)
+			shader_mat.set_shader_parameter("wireframe_full", wireframe_full)
+			shader_mat.set_shader_parameter("dissolve_start", dissolve_start)
+			shader_mat.set_shader_parameter("dissolve_full", dissolve_full)
+			shader_mat.set_shader_parameter("wireframe_use_albedo_color", true)
+			
 			material = shader_mat
 		else:
 			material = _create_standard_material(tile_def)
@@ -177,10 +280,9 @@ func _create_collision_body() -> StaticBody3D:
 	
 	var cell_size := grid_settings.get_cell_size()
 	
-	# Create collision shapes for each tile
-	# For better performance, we could merge adjacent tiles, but individual shapes work fine
-	for tile_pos in level_data.tiles.keys():
-		var tile_id: StringName = level_data.tiles[tile_pos]
+	var all_positions := level_data.get_all_tile_positions()
+	for tile_pos in all_positions:
+		var tile_id: StringName = level_data.get_tile(tile_pos)
 		var tile_def := _get_tile_definition(tile_id)
 		
 		# Skip non-solid tiles
