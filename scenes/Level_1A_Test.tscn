@@ -1,8 +1,8 @@
 [gd_scene load_steps=2003 format=4 uid="uid://dq2q4ms6f7ygk"]
 
 [ext_resource type="Shader" uid="uid://d27rvaturmeke" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_iiugs"]
-[ext_resource type="Script" uid="uid://u4103bmt3fgy" path="res://addons/xtreme_level_editor/nodes/xtreme_camera_fixed.gd" id="2_4wn65"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="3_2mf36"]
+[ext_resource type="Script" uid="uid://bdwxxgjs3ob2d" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_4wn65"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_4wn65"]
 sky_top_color = Color(0.8145773, 1.0588765e-06, 0.4097517, 1)
@@ -14072,11 +14072,10 @@ shape = SubResource("BoxShape3D_wo47d")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 93, 7, 77)
 shape = SubResource("BoxShape3D_knkb7")
 
-[node name="XtremeCameraFixed" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.03536, 3, 108.78624)
-script = ExtResource("2_4wn65")
-target = NodePath("../Player_1-4")
-metadata/_custom_type_script = "uid://u4103bmt3fgy"
-
 [node name="Player_1-4" parent="." instance=ExtResource("3_2mf36")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.03536, 3, 108.78624)
+
+[node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
+script = ExtResource("3_4wn65")
+target = NodePath("../Player_1-4")
+metadata/_custom_type_script = "uid://bdwxxgjs3ob2d"
