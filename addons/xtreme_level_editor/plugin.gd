@@ -426,13 +426,69 @@ func _create_editor_dock() -> void:
 	
 	content.add_child(HSeparator.new())
 	
-	# Tile Selector
-	content.add_child(_make_label("Selected Tile"))
+	# ============ TILE PALETTE ============
+	content.add_child(_make_label("Tile Palette"))
+	
+	# Category filter dropdown
+	var category_row := HBoxContainer.new()
+	category_row.add_child(_make_label("Category: "))
+	var category_filter := OptionButton.new()
+	category_filter.name = "CategoryFilter"
+	category_filter.add_item("All", 0)
+	category_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	category_filter.item_selected.connect(_on_category_filter_changed)
+	category_row.add_child(category_filter)
+	content.add_child(category_row)
+	
+	# Tile grid container (scrollable)
+	var tile_scroll := ScrollContainer.new()
+	tile_scroll.name = "TilePaletteScroll"
+	tile_scroll.custom_minimum_size = Vector2(0, 150)
+	tile_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	var tile_grid := GridContainer.new()
+	tile_grid.name = "TilePaletteGrid"
+	tile_grid.columns = 3
+	tile_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile_scroll.add_child(tile_grid)
+	content.add_child(tile_scroll)
+	
+	# Selected tile info
+	var selected_tile_info := VBoxContainer.new()
+	selected_tile_info.name = "SelectedTileInfo"
+	
+	var selected_label := Label.new()
+	selected_label.name = "SelectedTileName"
+	selected_label.text = "Selected: Solid Block"
+	selected_label.add_theme_font_size_override("font_size", 12)
+	selected_tile_info.add_child(selected_label)
+	
+	var selected_category := Label.new()
+	selected_category.name = "SelectedTileCategory"
+	selected_category.text = "Category: Geometry"
+	selected_category.add_theme_font_size_override("font_size", 10)
+	selected_category.add_theme_color_override("font_color", Color.GRAY)
+	selected_tile_info.add_child(selected_category)
+	
+	var selected_size := Label.new()
+	selected_size.name = "SelectedTileSize"
+	selected_size.text = "Size: 1x1x1"
+	selected_size.add_theme_font_size_override("font_size", 10)
+	selected_size.add_theme_color_override("font_color", Color.GRAY)
+	selected_tile_info.add_child(selected_size)
+	
+	content.add_child(selected_tile_info)
+	
+	# Legacy dropdown (hidden but kept for compatibility)
 	_tile_selector = OptionButton.new()
 	_tile_selector.name = "TileSelector"
+	_tile_selector.visible = false
 	_update_tile_selector()
 	_tile_selector.item_selected.connect(_on_tile_selected)
 	content.add_child(_tile_selector)
+	
+	# Populate the tile palette grid
+	_populate_tile_palette()
 	
 	content.add_child(HSeparator.new())
 	
@@ -814,10 +870,142 @@ func _update_tile_selector() -> void:
 	if _tile_selector.item_count > 0:
 		_tile_selector.select(0)
 		_selected_tile_id = _tile_selector.get_item_metadata(0)
+	
+	# Also update the visual tile palette
+	_populate_tile_palette()
+
+# ============ Tile Palette Grid ============
+
+var _tile_palette_buttons: Dictionary = {}  # tile_id -> Button
+var _current_category_filter: String = "All"
+
+func _populate_tile_palette() -> void:
+	if not _main_dock:
+		return
+	
+	var tile_grid := _main_dock.find_child("TilePaletteGrid", true, false) as GridContainer
+	var category_filter := _main_dock.find_child("CategoryFilter", true, false) as OptionButton
+	
+	if not tile_grid:
+		return
+	
+	# Clear existing buttons
+	for child in tile_grid.get_children():
+		child.queue_free()
+	_tile_palette_buttons.clear()
+	
+	if not _current_palette:
+		return
+	
+	# Collect categories
+	var categories: Array[String] = ["All"]
+	for tile in _current_palette.tiles:
+		if tile.category not in categories:
+			categories.append(tile.category)
+	
+	# Update category dropdown
+	if category_filter:
+		category_filter.clear()
+		for i in range(categories.size()):
+			category_filter.add_item(categories[i], i)
+		# Restore selection
+		for i in range(categories.size()):
+			if categories[i] == _current_category_filter:
+				category_filter.select(i)
+				break
+	
+	# Create tile buttons
+	var button_group := ButtonGroup.new()
+	var first_visible_tile: XtremeTileDefinition = null
+	
+	for tile in _current_palette.tiles:
+		# Filter by category
+		if _current_category_filter != "All" and tile.category != _current_category_filter:
+			continue
+		
+		if first_visible_tile == null:
+			first_visible_tile = tile
+		
+		var btn := Button.new()
+		btn.text = tile.display_name
+		btn.toggle_mode = true
+		btn.button_group = button_group
+		btn.custom_minimum_size = Vector2(80, 40)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		
+		# Color the button based on tile color
+		var style := StyleBoxFlat.new()
+		style.bg_color = tile.editor_color.darkened(0.3)
+		style.set_border_width_all(2)
+		style.border_color = tile.editor_color
+		style.set_corner_radius_all(4)
+		btn.add_theme_stylebox_override("normal", style)
+		
+		var style_pressed := StyleBoxFlat.new()
+		style_pressed.bg_color = tile.editor_color
+		style_pressed.set_border_width_all(3)
+		style_pressed.border_color = Color.WHITE
+		style_pressed.set_corner_radius_all(4)
+		btn.add_theme_stylebox_override("pressed", style_pressed)
+		
+		var style_hover := StyleBoxFlat.new()
+		style_hover.bg_color = tile.editor_color.darkened(0.1)
+		style_hover.set_border_width_all(2)
+		style_hover.border_color = tile.editor_color.lightened(0.3)
+		style_hover.set_corner_radius_all(4)
+		btn.add_theme_stylebox_override("hover", style_hover)
+		
+		# Store tile_id in metadata
+		btn.set_meta("tile_id", tile.tile_id)
+		btn.pressed.connect(_on_palette_tile_pressed.bind(tile))
+		
+		# Select if this is the current tile
+		if tile.tile_id == _selected_tile_id:
+			btn.button_pressed = true
+		
+		tile_grid.add_child(btn)
+		_tile_palette_buttons[tile.tile_id] = btn
+	
+	# Select first tile if none selected
+	if _selected_tile_id == &"" and first_visible_tile:
+		_select_palette_tile(first_visible_tile)
+
+func _on_palette_tile_pressed(tile: XtremeTileDefinition) -> void:
+	_select_palette_tile(tile)
+
+func _select_palette_tile(tile: XtremeTileDefinition) -> void:
+	_selected_tile_id = tile.tile_id
+	
+	# Update the info display
+	if _main_dock:
+		var name_label := _main_dock.find_child("SelectedTileName", true, false) as Label
+		var category_label := _main_dock.find_child("SelectedTileCategory", true, false) as Label
+		var size_label := _main_dock.find_child("SelectedTileSize", true, false) as Label
+		
+		if name_label:
+			name_label.text = "Selected: %s" % tile.display_name
+		if category_label:
+			category_label.text = "Category: %s" % tile.category
+		if size_label:
+			size_label.text = "Size: %dx%dx%d" % [tile.cell_size.x, tile.cell_size.y, tile.cell_size.z]
+	
+	# Update button selection
+	for tile_id in _tile_palette_buttons:
+		var btn: Button = _tile_palette_buttons[tile_id]
+		btn.button_pressed = (tile_id == _selected_tile_id)
+	
+	_set_status("Tile: %s (%dx%dx%d)" % [tile.display_name, tile.cell_size.x, tile.cell_size.y, tile.cell_size.z])
+
+func _on_category_filter_changed(index: int) -> void:
+	var category_filter := _main_dock.find_child("CategoryFilter", true, false) as OptionButton
+	if category_filter:
+		_current_category_filter = category_filter.get_item_text(index)
+	_populate_tile_palette()
 
 func _on_tile_selected(index: int) -> void:
-	_selected_tile_id = _tile_selector.get_item_metadata(index)
-	_set_status("Tile: %s" % _current_palette.tiles[index].display_name)
+	if index >= 0 and index < _current_palette.tiles.size():
+		var tile := _current_palette.tiles[index]
+		_select_palette_tile(tile)
 
 func _on_editing_toggled(enabled: bool) -> void:
 	_editing_enabled = enabled

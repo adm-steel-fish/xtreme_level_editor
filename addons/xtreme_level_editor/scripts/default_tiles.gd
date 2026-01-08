@@ -21,6 +21,30 @@ static func create_default_palette() -> XtremeTilePalette:
 	solid.generation_weight = 5.0
 	palette.tiles.append(solid)
 	
+	var large_block := XtremeTileDefinition.new()
+	large_block.tile_id = &"large_block"
+	large_block.display_name = "Large Block (2x1x1)"
+	large_block.category = "Geometry"
+	large_block.editor_color = Color(0.3, 0.5, 0.8)
+	large_block.tile_type = XtremeTileDefinition.TileType.SOLID
+	large_block.is_solid = true
+	large_block.is_standable = true
+	large_block.cell_size = Vector3i(2, 1, 1)  # 2 units wide
+	large_block.generation_weight = 2.0
+	palette.tiles.append(large_block)
+	
+	var tall_block := XtremeTileDefinition.new()
+	tall_block.tile_id = &"tall_block"
+	tall_block.display_name = "Tall Block (1x2x1)"
+	tall_block.category = "Geometry"
+	tall_block.editor_color = Color(0.8, 0.5, 0.3)
+	tall_block.tile_type = XtremeTileDefinition.TileType.SOLID
+	tall_block.is_solid = true
+	tall_block.is_standable = true
+	tall_block.cell_size = Vector3i(1, 2, 1)  # 2 units tall
+	tall_block.generation_weight = 2.0
+	palette.tiles.append(tall_block)
+	
 	var platform := XtremeTileDefinition.new()
 	platform.tile_id = &"platform"
 	platform.display_name = "Platform"

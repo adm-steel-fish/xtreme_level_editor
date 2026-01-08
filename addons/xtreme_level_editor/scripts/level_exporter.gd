@@ -124,6 +124,17 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 	
 	var cell_size := grid_settings.get_cell_size()
 	
+	# Get tile's cell count and apply rotation
+	var tile_cell_count := tile_def.cell_size
+	var rotated_cell_count := tile_def.get_rotated_size(rotation)
+	
+	# Calculate actual visual size based on cell count
+	var visual_size := Vector3(
+		cell_size.x * rotated_cell_count.x,
+		cell_size.y * rotated_cell_count.y,
+		cell_size.z * rotated_cell_count.z
+	)
+	
 	# Use ArrayMesh to combine all cubes into one mesh
 	var surface_tool := SurfaceTool.new()
 	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -142,18 +153,25 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 		))
 	
 	for pos in positions:
+		# Center position for the object (account for multi-cell offset)
+		var offset := Vector3(
+			(rotated_cell_count.x - 1) * cell_size.x * 0.5,
+			(rotated_cell_count.y - 1) * cell_size.y * 0.5,
+			(rotated_cell_count.z - 1) * cell_size.z * 0.5
+		)
+		
 		var world_pos := Vector3(
 			pos.x * cell_size.x + cell_size.x * 0.5,
 			pos.y * cell_size.y + cell_size.y * 0.5,
 			pos.z * cell_size.z + cell_size.z * 0.5
-		)
+		) + offset
 		
 		# Update bounds
-		min_bounds = min_bounds.min(world_pos - cell_size * 0.5)
-		max_bounds = max_bounds.max(world_pos + cell_size * 0.5)
+		min_bounds = min_bounds.min(world_pos - visual_size * 0.5)
+		max_bounds = max_bounds.max(world_pos + visual_size * 0.5)
 		
-		# Add cube with hidden face removal and rotation
-		_add_cube_with_occlusion_rotated(surface_tool, pos, world_pos, cell_size, tile_def, rot_basis)
+		# Add cube with hidden face removal and rotation (using visual size)
+		_add_cube_with_occlusion_rotated(surface_tool, pos, world_pos, visual_size, tile_def, rot_basis)
 	
 	surface_tool.generate_normals()
 	var array_mesh := surface_tool.commit()

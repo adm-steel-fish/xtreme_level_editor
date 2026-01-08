@@ -14078,4 +14078,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.03536, 3, 108.78624)
 [node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
 script = ExtResource("3_4wn65")
 target = NodePath("../Player_1-4")
+fade_speed = 1.0
 metadata/_custom_type_script = "uid://bdwxxgjs3ob2d"

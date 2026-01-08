@@ -125,26 +125,28 @@ func _update_wall_fade(delta: float) -> void:
 	query.collide_with_areas = false
 	query.collide_with_bodies = true
 	
-	# Find all objects between camera and player
-	var obstructing_objects: Array[Node] = []
+	# Find all collision hits between camera and player
+	var hit_colliders: Array[Node] = []
+	var exclude_rids: Array[RID] = []
 	var current_from := from
 	
 	# Cast multiple rays to find all obstructing objects
 	for i in range(10):  # Max 10 objects
+		query = PhysicsRayQueryParameters3D.create(current_from, to, wall_collision_mask)
+		query.collide_with_areas = false
+		query.collide_with_bodies = true
+		query.exclude = exclude_rids
+		
 		var result := space_state.intersect_ray(query)
 		if result.is_empty():
 			break
 		
-		var collider := result.collider as Node
-		if collider and collider not in obstructing_objects:
-			obstructing_objects.append(collider)
+		if result.collider and result.collider not in hit_colliders:
+			hit_colliders.append(result.collider)
+		exclude_rids.append(result.rid)
 		
 		# Move ray start past this hit
 		current_from = result.position + (to - from).normalized() * 0.1
-		query = PhysicsRayQueryParameters3D.create(current_from, to, wall_collision_mask)
-		query.collide_with_areas = false
-		query.collide_with_bodies = true
-		query.exclude = [result.rid]
 	
 	# Also check for objects very close to camera
 	var close_query := PhysicsShapeQueryParameters3D.new()
@@ -157,18 +159,26 @@ func _update_wall_fade(delta: float) -> void:
 	var close_results := space_state.intersect_shape(close_query, 32)
 	for result in close_results:
 		var collider := result.collider as Node
-		if collider and collider not in obstructing_objects:
-			obstructing_objects.append(collider)
+		if collider and collider not in hit_colliders:
+			hit_colliders.append(collider)
+	
+	# Find meshes to fade - look for MeshInstance3D nodes near hits or as siblings of colliders
+	var meshes_to_fade: Array[MeshInstance3D] = []
+	
+	for collider in hit_colliders:
+		var found_meshes := _find_nearby_meshes(collider)
+		for mesh in found_meshes:
+			if mesh not in meshes_to_fade:
+				meshes_to_fade.append(mesh)
 	
 	# Update fade targets
-	# Objects that should be faded
-	for obj in obstructing_objects:
-		_fade_targets[obj] = min_opacity
+	for mesh in meshes_to_fade:
+		_fade_targets[mesh] = min_opacity
 	
 	# Objects that should restore
 	var objects_to_restore: Array[Node] = []
 	for obj in _faded_objects.keys():
-		if obj not in obstructing_objects:
+		if obj not in meshes_to_fade:
 			objects_to_restore.append(obj)
 	
 	for obj in objects_to_restore:
@@ -176,6 +186,38 @@ func _update_wall_fade(delta: float) -> void:
 	
 	# Apply fading
 	_apply_fade_transitions(delta)
+
+func _find_nearby_meshes(node: Node) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	
+	# Check the node itself
+	if node is MeshInstance3D:
+		result.append(node)
+	
+	# Check parent
+	var parent := node.get_parent()
+	if parent:
+		if parent is MeshInstance3D:
+			result.append(parent)
+		
+		# Check siblings (same parent) - this finds the batched meshes next to LevelCollision
+		for sibling in parent.get_children():
+			if sibling is MeshInstance3D and sibling not in result:
+				result.append(sibling)
+		
+		# Check parent's parent and its children (for nested scene structures)
+		var grandparent := parent.get_parent()
+		if grandparent:
+			for child in grandparent.get_children():
+				if child is MeshInstance3D and child not in result:
+					result.append(child)
+	
+	# Check children
+	for child in node.get_children():
+		if child is MeshInstance3D and child not in result:
+			result.append(child)
+	
+	return result
 
 func _apply_fade_transitions(delta: float) -> void:
 	var objects_to_remove: Array[Node] = []

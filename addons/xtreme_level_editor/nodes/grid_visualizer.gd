@@ -279,6 +279,33 @@ func _create_tile_visual(pos: Vector3i) -> void:
 	if tile_palette:
 		tile_def = tile_palette.get_tile(tile_id)
 	
+	# Get rotation for proper size calculation
+	var tile_rotation := level_data.get_tile_rotation(pos)
+	
+	# Calculate visual size based on tile definition cell_size and rotation
+	var tile_cell_count := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_cell_count = tile_def.cell_size
+	
+	# Get rotated size
+	var rotated_cell_count := tile_cell_count
+	if tile_rotation != Vector3i.ZERO and tile_def:
+		rotated_cell_count = tile_def.get_rotated_size(tile_rotation)
+	
+	# Calculate actual visual size
+	var visual_size := Vector3(
+		cell_size.x * rotated_cell_count.x,
+		cell_size.y * rotated_cell_count.y,
+		cell_size.z * rotated_cell_count.z
+	) * 0.95  # Slightly smaller to show grid
+	
+	# Offset position for multi-cell objects (center them on their footprint)
+	var offset := Vector3(
+		(rotated_cell_count.x - 1) * cell_size.x * 0.5,
+		(rotated_cell_count.y - 1) * cell_size.y * 0.5,
+		(rotated_cell_count.z - 1) * cell_size.z * 0.5
+	)
+	
 	var visual: Node3D
 	
 	if tile_def and tile_def.tile_scene:
@@ -293,7 +320,7 @@ func _create_tile_visual(pos: Vector3i) -> void:
 		# Default: colored box based on tile type
 		var mesh_instance := MeshInstance3D.new()
 		var box := BoxMesh.new()
-		box.size = cell_size * 0.95  # Slightly smaller to show grid
+		box.size = visual_size
 		mesh_instance.mesh = box
 		
 		var mat := StandardMaterial3D.new()
@@ -304,11 +331,10 @@ func _create_tile_visual(pos: Vector3i) -> void:
 		mesh_instance.material_override = mat
 		visual = mesh_instance
 	
-	visual.position = world_pos
+	visual.position = world_pos + offset
 	visual.name = "Tile_%d_%d_%d" % [pos.x, pos.y, pos.z]
 	
 	# Apply rotation if the level data has rotation for this tile
-	var tile_rotation := level_data.get_tile_rotation(pos)
 	if tile_rotation != Vector3i.ZERO:
 		visual.rotation_degrees = Vector3(
 			tile_rotation.x * 90.0,
