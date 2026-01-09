@@ -8,6 +8,10 @@ const PLUGIN_NAME := "Xtreme Level Editor"
 const SETTINGS_PATH := "res://xtreme_level_editor_settings.tres"
 const MAX_UNDO_HISTORY := 10
 
+# Colors for brush preview
+const BRUSH_COLOR_VALID := Color(0.0, 1.0, 0.5, 0.35)  # Green - can place
+const BRUSH_COLOR_BLOCKED := Color(1.0, 0.2, 0.2, 0.45)  # Red - blocked
+
 # UI Elements
 var _main_dock: Control
 var _tile_selector: OptionButton
@@ -24,6 +28,7 @@ var _grid_visualizer: XtremeGridVisualizer
 var _grid_lines_mesh: MeshInstance3D
 var _selection_box_mesh: MeshInstance3D
 var _brush_preview_mesh: MeshInstance3D
+var _brush_preview_material: StandardMaterial3D
 var _rect_preview_mesh: MeshInstance3D
 var _select_preview_mesh: MeshInstance3D
 
@@ -40,6 +45,12 @@ var _editing_enabled: bool = false
 
 # Rotation state (in 90-degree increments: 0, 1, 2, 3)
 var _current_rotation: Vector3i = Vector3i.ZERO
+
+# Grid orientation: 0=XZ (horizontal), 1=XY (vertical front), 2=YZ (vertical side)
+var _grid_orientation: int = 0
+const GRID_XZ := 0  # Horizontal floor/ceiling (default)
+const GRID_XY := 1  # Vertical wall facing Z
+const GRID_YZ := 2  # Vertical wall facing X
 
 # Drag painting state
 var _is_dragging: bool = false
@@ -207,28 +218,9 @@ func _load_or_create_settings() -> void:
 		ResourceSaver.save(_grid_settings, SETTINGS_PATH)
 
 func _create_default_palette() -> void:
-	_current_palette = XtremeTilePalette.new()
-	_current_palette.palette_name = "Default"
-	
-	var tiles_data := [
-		{&"solid": ["Solid Block", Color(0.6, 0.6, 0.6)]},
-		{&"platform": ["Platform", Color(0.4, 0.7, 0.4)]},
-		{&"spike": ["Spikes", Color(1.0, 0.2, 0.2)]},
-		{&"spring": ["Spring", Color(1.0, 1.0, 0.2)]},
-		{&"ring": ["Ring", Color(1.0, 0.85, 0.0)]},
-		{&"boost": ["Boost Pad", Color(0.2, 0.8, 1.0)]},
-		{&"checkpoint": ["Checkpoint", Color(0.2, 1.0, 0.5)]},
-		{&"goal": ["Goal", Color(0.3, 0.5, 1.0)]},
-	]
-	
-	for tile_info in tiles_data:
-		for tile_id in tile_info.keys():
-			var data: Array = tile_info[tile_id]
-			var tile := XtremeTileDefinition.new()
-			tile.tile_id = tile_id
-			tile.display_name = data[0]
-			tile.editor_color = data[1]
-			_current_palette.tiles.append(tile)
+	# Use the full default palette from default_tiles.gd
+	var DefaultTiles := preload("res://addons/xtreme_level_editor/scripts/default_tiles.gd")
+	_current_palette = DefaultTiles.create_default_palette()
 
 func _create_context_menu() -> void:
 	_context_menu = PopupMenu.new()
@@ -256,6 +248,12 @@ func _create_context_menu() -> void:
 	# Layer controls
 	_context_menu.add_item("Layer Up", 20)
 	_context_menu.add_item("Layer Down", 21)
+	_context_menu.add_separator()
+	
+	# Grid orientation
+	_context_menu.add_item("Grid: XZ (Floor) [1]", 40)
+	_context_menu.add_item("Grid: XY (Front) [2]", 41)
+	_context_menu.add_item("Grid: YZ (Side) [3]", 42)
 	
 	_context_menu.id_pressed.connect(_on_context_menu_selected)
 	EditorInterface.get_base_control().add_child(_context_menu)
@@ -274,6 +272,9 @@ func _on_context_menu_selected(id: int) -> void:
 		21: _change_y_level(-1)
 		30: _undo()
 		31: _redo()
+		40: _set_grid_orientation(GRID_XZ)
+		41: _set_grid_orientation(GRID_XY)
+		42: _set_grid_orientation(GRID_YZ)
 
 func _set_tool(tool_id: int) -> void:
 	_edit_mode = tool_id
@@ -300,14 +301,30 @@ func _update_tool_buttons() -> void:
 func _change_y_level(delta: int) -> void:
 	if not _current_level:
 		return
-	var new_level := clampi(_current_y_level + delta, 0, _current_level.size_y - 1)
+	
+	# Determine max based on grid orientation
+	var max_level: int
+	match _grid_orientation:
+		GRID_XZ: max_level = _current_level.size_y - 1
+		GRID_XY: max_level = _current_level.size_z - 1
+		GRID_YZ: max_level = _current_level.size_x - 1
+		_: max_level = _current_level.size_y - 1
+	
+	var new_level := clampi(_current_y_level + delta, 0, max_level)
 	if new_level != _current_y_level:
 		_current_y_level = new_level
 		if _y_level_spinbox:
 			_y_level_spinbox.value = _current_y_level
 		_update_grid_lines()
 		_update_selection_visual()
-		_set_status("Y Level: %d" % _current_y_level)
+		
+		# Status message based on orientation
+		var axis_name: String
+		match _grid_orientation:
+			GRID_XZ: axis_name = "Y"
+			GRID_XY: axis_name = "Z"
+			GRID_YZ: axis_name = "X"
+		_set_status("%s Level: %d" % [axis_name, _current_y_level])
 
 # ============ Undo/Redo System ============
 
@@ -427,68 +444,94 @@ func _create_editor_dock() -> void:
 	content.add_child(HSeparator.new())
 	
 	# ============ TILE PALETTE ============
-	content.add_child(_make_label("Tile Palette"))
+	var palette_header := Label.new()
+	palette_header.text = "TILE PALETTE"
+	palette_header.add_theme_font_size_override("font_size", 14)
+	palette_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(palette_header)
 	
 	# Category filter dropdown
 	var category_row := HBoxContainer.new()
-	category_row.add_child(_make_label("Category: "))
+	var cat_label := Label.new()
+	cat_label.text = "Category:"
+	cat_label.custom_minimum_size.x = 70
+	category_row.add_child(cat_label)
+	
 	var category_filter := OptionButton.new()
 	category_filter.name = "CategoryFilter"
-	category_filter.add_item("All", 0)
 	category_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	category_filter.item_selected.connect(_on_category_filter_changed)
 	category_row.add_child(category_filter)
 	content.add_child(category_row)
 	
-	# Tile grid container (scrollable)
+	# Tile icon grid (scrollable)
 	var tile_scroll := ScrollContainer.new()
 	tile_scroll.name = "TilePaletteScroll"
-	tile_scroll.custom_minimum_size = Vector2(0, 150)
+	tile_scroll.custom_minimum_size = Vector2(0, 180)
 	tile_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tile_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	
 	var tile_grid := GridContainer.new()
 	tile_grid.name = "TilePaletteGrid"
-	tile_grid.columns = 3
+	tile_grid.columns = 4
 	tile_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile_grid.add_theme_constant_override("h_separation", 4)
+	tile_grid.add_theme_constant_override("v_separation", 4)
 	tile_scroll.add_child(tile_grid)
 	content.add_child(tile_scroll)
 	
-	# Selected tile info
+	# Selected tile info panel
+	var info_panel := PanelContainer.new()
+	info_panel.name = "SelectedTilePanel"
+	var info_style := StyleBoxFlat.new()
+	info_style.bg_color = Color(0.15, 0.15, 0.15)
+	info_style.set_border_width_all(1)
+	info_style.border_color = Color(0.3, 0.3, 0.3)
+	info_style.set_corner_radius_all(4)
+	info_style.set_content_margin_all(8)
+	info_panel.add_theme_stylebox_override("panel", info_style)
+	
 	var selected_tile_info := VBoxContainer.new()
 	selected_tile_info.name = "SelectedTileInfo"
 	
 	var selected_label := Label.new()
 	selected_label.name = "SelectedTileName"
-	selected_label.text = "Selected: Solid Block"
-	selected_label.add_theme_font_size_override("font_size", 12)
+	selected_label.text = "Selected: None"
+	selected_label.add_theme_font_size_override("font_size", 13)
 	selected_tile_info.add_child(selected_label)
 	
+	var info_row := HBoxContainer.new()
 	var selected_category := Label.new()
 	selected_category.name = "SelectedTileCategory"
-	selected_category.text = "Category: Geometry"
-	selected_category.add_theme_font_size_override("font_size", 10)
-	selected_category.add_theme_color_override("font_color", Color.GRAY)
-	selected_tile_info.add_child(selected_category)
+	selected_category.text = "Category: -"
+	selected_category.add_theme_font_size_override("font_size", 11)
+	selected_category.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	info_row.add_child(selected_category)
+	
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_row.add_child(spacer)
 	
 	var selected_size := Label.new()
 	selected_size.name = "SelectedTileSize"
-	selected_size.text = "Size: 1x1x1"
-	selected_size.add_theme_font_size_override("font_size", 10)
-	selected_size.add_theme_color_override("font_color", Color.GRAY)
-	selected_tile_info.add_child(selected_size)
+	selected_size.text = "Size: -"
+	selected_size.add_theme_font_size_override("font_size", 11)
+	selected_size.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	info_row.add_child(selected_size)
 	
-	content.add_child(selected_tile_info)
+	selected_tile_info.add_child(info_row)
+	info_panel.add_child(selected_tile_info)
+	content.add_child(info_panel)
 	
-	# Legacy dropdown (hidden but kept for compatibility)
+	# Hidden legacy dropdown for compatibility
 	_tile_selector = OptionButton.new()
 	_tile_selector.name = "TileSelector"
 	_tile_selector.visible = false
-	_update_tile_selector()
 	_tile_selector.item_selected.connect(_on_tile_selected)
 	content.add_child(_tile_selector)
 	
-	# Populate the tile palette grid
-	_populate_tile_palette()
+	# Initialize the tile palette (populates categories and grid)
+	call_deferred("_initialize_tile_palette")
 	
 	content.add_child(HSeparator.new())
 	
@@ -553,9 +596,49 @@ func _create_editor_dock() -> void:
 	undo_row.add_child(redo_btn)
 	content.add_child(undo_row)
 	
-	# Y Level
-	var y_container := HBoxContainer.new()
-	y_container.add_child(_make_label("Y Level: "))
+	content.add_child(HSeparator.new())
+	
+	# Grid Orientation
+	content.add_child(_make_label("Grid Orientation (1, 2, 3)"))
+	var grid_orient_row := HBoxContainer.new()
+	var grid_orient_group := ButtonGroup.new()
+	
+	var xz_btn := Button.new()
+	xz_btn.name = "GridXZ"
+	xz_btn.text = "XZ (Floor)"
+	xz_btn.toggle_mode = true
+	xz_btn.button_pressed = true
+	xz_btn.button_group = grid_orient_group
+	xz_btn.pressed.connect(func(): _set_grid_orientation(GRID_XZ))
+	xz_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_orient_row.add_child(xz_btn)
+	
+	var xy_btn := Button.new()
+	xy_btn.name = "GridXY"
+	xy_btn.text = "XY (Front)"
+	xy_btn.toggle_mode = true
+	xy_btn.button_group = grid_orient_group
+	xy_btn.pressed.connect(func(): _set_grid_orientation(GRID_XY))
+	xy_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_orient_row.add_child(xy_btn)
+	
+	var yz_btn := Button.new()
+	yz_btn.name = "GridYZ"
+	yz_btn.text = "YZ (Side)"
+	yz_btn.toggle_mode = true
+	yz_btn.button_group = grid_orient_group
+	yz_btn.pressed.connect(func(): _set_grid_orientation(GRID_YZ))
+	yz_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_orient_row.add_child(yz_btn)
+	
+	content.add_child(grid_orient_row)
+	
+	# Layer control (changes based on grid orientation)
+	var layer_container := HBoxContainer.new()
+	var layer_label := Label.new()
+	layer_label.name = "LayerLabel"
+	layer_label.text = "Y Level: "
+	layer_container.add_child(layer_label)
 	_y_level_spinbox = SpinBox.new()
 	_y_level_spinbox.name = "YLevel"
 	_y_level_spinbox.min_value = 0
@@ -563,8 +646,8 @@ func _create_editor_dock() -> void:
 	_y_level_spinbox.value = 0
 	_y_level_spinbox.value_changed.connect(_on_y_level_changed)
 	_y_level_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	y_container.add_child(_y_level_spinbox)
-	content.add_child(y_container)
+	layer_container.add_child(_y_level_spinbox)
+	content.add_child(layer_container)
 	
 	var y_hint := Label.new()
 	y_hint.text = "(Mouse wheel to change)"
@@ -859,6 +942,7 @@ func _make_label(text: String) -> Label:
 	return l
 
 func _update_tile_selector() -> void:
+	# This is now deprecated - kept for compatibility only
 	if not _tile_selector:
 		return
 	_tile_selector.clear()
@@ -867,116 +951,172 @@ func _update_tile_selector() -> void:
 			var tile := _current_palette.tiles[i]
 			_tile_selector.add_item(tile.display_name, i)
 			_tile_selector.set_item_metadata(i, tile.tile_id)
-	if _tile_selector.item_count > 0:
-		_tile_selector.select(0)
-		_selected_tile_id = _tile_selector.get_item_metadata(0)
-	
-	# Also update the visual tile palette
-	_populate_tile_palette()
 
-# ============ Tile Palette Grid ============
+# ============ TILE PALETTE SYSTEM ============
 
-var _tile_palette_buttons: Dictionary = {}  # tile_id -> Button
-var _current_category_filter: String = "All"
+var _tile_icon_buttons: Dictionary = {}  # tile_id -> Button
+var _current_category_filter: String = "Geometry"  # Default to Geometry
+var _palette_button_group: ButtonGroup
 
-func _populate_tile_palette() -> void:
-	if not _main_dock:
+func _initialize_tile_palette() -> void:
+	if not _main_dock or not _current_palette:
 		return
 	
-	var tile_grid := _main_dock.find_child("TilePaletteGrid", true, false) as GridContainer
+	_palette_button_group = ButtonGroup.new()
+	
+	# Get UI elements
 	var category_filter := _main_dock.find_child("CategoryFilter", true, false) as OptionButton
 	
-	if not tile_grid:
+	if not category_filter:
+		push_error("[Xtreme Level Editor] CategoryFilter not found!")
 		return
 	
-	# Clear existing buttons
-	for child in tile_grid.get_children():
-		child.queue_free()
-	_tile_palette_buttons.clear()
-	
-	if not _current_palette:
-		return
-	
-	# Collect categories
-	var categories: Array[String] = ["All"]
+	# Build list of categories from the palette
+	var categories: Array[String] = []
 	for tile in _current_palette.tiles:
 		if tile.category not in categories:
 			categories.append(tile.category)
 	
-	# Update category dropdown
-	if category_filter:
-		category_filter.clear()
-		for i in range(categories.size()):
-			category_filter.add_item(categories[i], i)
-		# Restore selection
-		for i in range(categories.size()):
-			if categories[i] == _current_category_filter:
-				category_filter.select(i)
+	# Sort categories in a logical order
+	var category_order := ["Geometry", "Hazards", "Interactive", "Collectibles", "Enemies", "Progress", "Decoration"]
+	var sorted_categories: Array[String] = []
+	for cat in category_order:
+		if cat in categories:
+			sorted_categories.append(cat)
+	# Add any remaining categories not in our predefined order
+	for cat in categories:
+		if cat not in sorted_categories:
+			sorted_categories.append(cat)
+	
+	# Populate category dropdown
+	category_filter.clear()
+	for i in range(sorted_categories.size()):
+		category_filter.add_item(sorted_categories[i], i)
+	
+	# Select first category (Geometry)
+	if sorted_categories.size() > 0:
+		_current_category_filter = sorted_categories[0]
+		category_filter.select(0)
+	
+	# Populate the tile grid
+	_refresh_tile_grid()
+	
+	# Select first tile
+	if _current_palette.tiles.size() > 0:
+		for tile in _current_palette.tiles:
+			if tile.category == _current_category_filter:
+				_select_tile(tile)
 				break
+
+func _refresh_tile_grid() -> void:
+	if not _main_dock or not _current_palette:
+		return
 	
-	# Create tile buttons
-	var button_group := ButtonGroup.new()
-	var first_visible_tile: XtremeTileDefinition = null
+	var tile_grid := _main_dock.find_child("TilePaletteGrid", true, false) as GridContainer
+	if not tile_grid:
+		return
 	
+	# Clear existing icons
+	for child in tile_grid.get_children():
+		child.queue_free()
+	_tile_icon_buttons.clear()
+	
+	# Create icon buttons for tiles in current category
 	for tile in _current_palette.tiles:
-		# Filter by category
-		if _current_category_filter != "All" and tile.category != _current_category_filter:
+		if tile.category != _current_category_filter:
 			continue
 		
-		if first_visible_tile == null:
-			first_visible_tile = tile
+		# Create icon button
+		var icon_btn := Button.new()
+		icon_btn.toggle_mode = true
+		icon_btn.button_group = _palette_button_group
+		icon_btn.custom_minimum_size = Vector2(60, 60)
+		icon_btn.tooltip_text = "%s\n%s\nSize: %dx%dx%d" % [tile.display_name, tile.category, tile.cell_size.x, tile.cell_size.y, tile.cell_size.z]
 		
-		var btn := Button.new()
-		btn.text = tile.display_name
-		btn.toggle_mode = true
-		btn.button_group = button_group
-		btn.custom_minimum_size = Vector2(80, 40)
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# Create a VBox for icon + label
+		var vbox := VBoxContainer.new()
+		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 		
-		# Color the button based on tile color
-		var style := StyleBoxFlat.new()
-		style.bg_color = tile.editor_color.darkened(0.3)
-		style.set_border_width_all(2)
-		style.border_color = tile.editor_color
-		style.set_corner_radius_all(4)
-		btn.add_theme_stylebox_override("normal", style)
+		# Create color rect as icon (since we don't have actual textures)
+		var icon_container := CenterContainer.new()
+		icon_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		
-		var style_pressed := StyleBoxFlat.new()
-		style_pressed.bg_color = tile.editor_color
-		style_pressed.set_border_width_all(3)
-		style_pressed.border_color = Color.WHITE
-		style_pressed.set_corner_radius_all(4)
-		btn.add_theme_stylebox_override("pressed", style_pressed)
+		var color_icon := ColorRect.new()
+		color_icon.color = tile.editor_color
+		color_icon.custom_minimum_size = Vector2(32, 32)
+		color_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		
-		var style_hover := StyleBoxFlat.new()
-		style_hover.bg_color = tile.editor_color.darkened(0.1)
-		style_hover.set_border_width_all(2)
-		style_hover.border_color = tile.editor_color.lightened(0.3)
-		style_hover.set_corner_radius_all(4)
-		btn.add_theme_stylebox_override("hover", style_hover)
+		# Add border effect
+		var icon_panel := PanelContainer.new()
+		icon_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var icon_style := StyleBoxFlat.new()
+		icon_style.bg_color = tile.editor_color
+		icon_style.set_border_width_all(2)
+		icon_style.border_color = tile.editor_color.lightened(0.3)
+		icon_style.set_corner_radius_all(4)
+		icon_panel.add_theme_stylebox_override("panel", icon_style)
+		icon_panel.custom_minimum_size = Vector2(36, 36)
 		
-		# Store tile_id in metadata
-		btn.set_meta("tile_id", tile.tile_id)
-		btn.pressed.connect(_on_palette_tile_pressed.bind(tile))
+		icon_container.add_child(icon_panel)
+		vbox.add_child(icon_container)
 		
-		# Select if this is the current tile
+		# Short label
+		var label := Label.new()
+		label.text = _get_short_name(tile.display_name)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 9)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(label)
+		
+		icon_btn.add_child(vbox)
+		
+		# Style the button
+		var btn_normal := StyleBoxFlat.new()
+		btn_normal.bg_color = Color(0.2, 0.2, 0.2)
+		btn_normal.set_border_width_all(1)
+		btn_normal.border_color = Color(0.3, 0.3, 0.3)
+		btn_normal.set_corner_radius_all(6)
+		icon_btn.add_theme_stylebox_override("normal", btn_normal)
+		
+		var btn_hover := StyleBoxFlat.new()
+		btn_hover.bg_color = Color(0.25, 0.25, 0.3)
+		btn_hover.set_border_width_all(2)
+		btn_hover.border_color = tile.editor_color.lightened(0.2)
+		btn_hover.set_corner_radius_all(6)
+		icon_btn.add_theme_stylebox_override("hover", btn_hover)
+		
+		var btn_pressed := StyleBoxFlat.new()
+		btn_pressed.bg_color = Color(0.15, 0.25, 0.35)
+		btn_pressed.set_border_width_all(3)
+		btn_pressed.border_color = Color.WHITE
+		btn_pressed.set_corner_radius_all(6)
+		icon_btn.add_theme_stylebox_override("pressed", btn_pressed)
+		
+		# Connect selection
+		icon_btn.pressed.connect(_on_tile_icon_pressed.bind(tile))
+		
+		# Select if this is current tile
 		if tile.tile_id == _selected_tile_id:
-			btn.button_pressed = true
+			icon_btn.button_pressed = true
 		
-		tile_grid.add_child(btn)
-		_tile_palette_buttons[tile.tile_id] = btn
-	
-	# Select first tile if none selected
-	if _selected_tile_id == &"" and first_visible_tile:
-		_select_palette_tile(first_visible_tile)
+		tile_grid.add_child(icon_btn)
+		_tile_icon_buttons[tile.tile_id] = icon_btn
 
-func _on_palette_tile_pressed(tile: XtremeTileDefinition) -> void:
-	_select_palette_tile(tile)
+func _get_short_name(name: String) -> String:
+	# Shorten long names for the icon label
+	if name.length() > 10:
+		return name.substr(0, 8) + ".."
+	return name
 
-func _select_palette_tile(tile: XtremeTileDefinition) -> void:
+func _on_tile_icon_pressed(tile: XtremeTileDefinition) -> void:
+	_select_tile(tile)
+
+func _select_tile(tile: XtremeTileDefinition) -> void:
 	_selected_tile_id = tile.tile_id
 	
-	# Update the info display
+	# Update info panel
 	if _main_dock:
 		var name_label := _main_dock.find_child("SelectedTileName", true, false) as Label
 		var category_label := _main_dock.find_child("SelectedTileCategory", true, false) as Label
@@ -989,23 +1129,31 @@ func _select_palette_tile(tile: XtremeTileDefinition) -> void:
 		if size_label:
 			size_label.text = "Size: %dx%dx%d" % [tile.cell_size.x, tile.cell_size.y, tile.cell_size.z]
 	
-	# Update button selection
-	for tile_id in _tile_palette_buttons:
-		var btn: Button = _tile_palette_buttons[tile_id]
-		btn.button_pressed = (tile_id == _selected_tile_id)
+	# Update button selection state
+	for tile_id in _tile_icon_buttons:
+		var btn: Button = _tile_icon_buttons[tile_id]
+		if btn and is_instance_valid(btn):
+			btn.button_pressed = (tile_id == _selected_tile_id)
 	
-	_set_status("Tile: %s (%dx%dx%d)" % [tile.display_name, tile.cell_size.x, tile.cell_size.y, tile.cell_size.z])
+	_set_status("Selected: %s" % tile.display_name)
 
 func _on_category_filter_changed(index: int) -> void:
 	var category_filter := _main_dock.find_child("CategoryFilter", true, false) as OptionButton
 	if category_filter:
 		_current_category_filter = category_filter.get_item_text(index)
-	_populate_tile_palette()
+		_refresh_tile_grid()
+		
+		# Select first tile in new category
+		for tile in _current_palette.tiles:
+			if tile.category == _current_category_filter:
+				_select_tile(tile)
+				break
 
 func _on_tile_selected(index: int) -> void:
-	if index >= 0 and index < _current_palette.tiles.size():
+	# Legacy dropdown handler
+	if _current_palette and index >= 0 and index < _current_palette.tiles.size():
 		var tile := _current_palette.tiles[index]
-		_select_palette_tile(tile)
+		_select_tile(tile)
 
 func _on_editing_toggled(enabled: bool) -> void:
 	_editing_enabled = enabled
@@ -1067,6 +1215,40 @@ func _cycle_rotation_z() -> void:
 func _update_rotation_display() -> void:
 	var degrees := _current_rotation * 90
 	_set_status("Rotation: X=%d° Y=%d° Z=%d°" % [degrees.x, degrees.y, degrees.z])
+
+# ============ Grid Orientation ============
+
+func _set_grid_orientation(orientation: int) -> void:
+	_grid_orientation = orientation
+	
+	# Update the layer label based on orientation
+	if _main_dock:
+		var layer_label := _main_dock.find_child("LayerLabel", true, false) as Label
+		if layer_label:
+			match orientation:
+				GRID_XZ: layer_label.text = "Y Level: "
+				GRID_XY: layer_label.text = "Z Level: "
+				GRID_YZ: layer_label.text = "X Level: "
+	
+	# Update button states
+	_update_grid_orientation_buttons()
+	
+	# Redraw grid lines
+	_update_grid_lines()
+	
+	var names := ["XZ (Floor)", "XY (Front Wall)", "YZ (Side Wall)"]
+	_set_status("Grid: %s" % names[orientation])
+
+func _update_grid_orientation_buttons() -> void:
+	if not _main_dock:
+		return
+	var xz_btn := _main_dock.find_child("GridXZ", true, false) as Button
+	var xy_btn := _main_dock.find_child("GridXY", true, false) as Button
+	var yz_btn := _main_dock.find_child("GridYZ", true, false) as Button
+	
+	if xz_btn: xz_btn.button_pressed = (_grid_orientation == GRID_XZ)
+	if xy_btn: xy_btn.button_pressed = (_grid_orientation == GRID_XY)
+	if yz_btn: yz_btn.button_pressed = (_grid_orientation == GRID_YZ)
 
 func _on_grid_visible_toggled(visible: bool) -> void:
 	if _grid_lines_mesh:
@@ -1164,22 +1346,76 @@ func _update_brush_preview(center_pos: Vector3i) -> void:
 		return
 	
 	var cell := _grid_settings.get_cell_size()
-	var half := _brush_size / 2
-	var min_x := center_pos.x - half
-	var min_z := center_pos.z - half
-	var max_x := min_x + _brush_size
-	var max_z := min_z + _brush_size
 	
-	var world_min := Vector3(min_x * cell.x, _current_y_level * cell.y, min_z * cell.z)
-	var world_max := Vector3(max_x * cell.x, (_current_y_level + 1) * cell.y, max_z * cell.z)
-	var center := (world_min + world_max) / 2.0
-	var size := world_max - world_min
+	# Get the current tile definition and its size
+	var tile_def := _get_selected_tile_definition()
+	var tile_size := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_size = tile_def.get_rotated_size(_current_rotation)
+	
+	# Calculate the preview bounds based on tile size
+	var anchor_pos := center_pos
+	
+	# For multi-cell tiles, calculate anchor position (bottom-left-front corner)
+	var world_min := Vector3(
+		anchor_pos.x * cell.x,
+		anchor_pos.y * cell.y,
+		anchor_pos.z * cell.z
+	)
+	var world_max := Vector3(
+		(anchor_pos.x + tile_size.x) * cell.x,
+		(anchor_pos.y + tile_size.y) * cell.y,
+		(anchor_pos.z + tile_size.z) * cell.z
+	)
+	var preview_center := (world_min + world_max) / 2.0
+	var preview_size := world_max - world_min
+	
+	# Check if placement is blocked
+	var is_blocked := _is_placement_blocked(anchor_pos, tile_size)
+	
+	# Update material color based on blocked state
+	if _brush_preview_material:
+		if _edit_mode == 1:  # Erase mode - always show erase color
+			_brush_preview_material.albedo_color = Color(1.0, 0.5, 0.0, 0.35)  # Orange for erase
+		elif is_blocked:
+			_brush_preview_material.albedo_color = BRUSH_COLOR_BLOCKED
+		else:
+			_brush_preview_material.albedo_color = BRUSH_COLOR_VALID
 	
 	var box := BoxMesh.new()
-	box.size = size
+	box.size = preview_size
 	_brush_preview_mesh.mesh = box
-	_brush_preview_mesh.position = center
+	_brush_preview_mesh.position = preview_center
 	_brush_preview_mesh.visible = true
+
+func _is_placement_blocked(anchor_pos: Vector3i, tile_size: Vector3i) -> bool:
+	if not _current_level:
+		return false
+	
+	# Check all cells that this tile would occupy
+	for x in range(tile_size.x):
+		for y in range(tile_size.y):
+			for z in range(tile_size.z):
+				var check_pos := anchor_pos + Vector3i(x, y, z)
+				
+				# Check bounds
+				if check_pos.x < 0 or check_pos.x >= _current_level.size_x:
+					return true
+				if check_pos.y < 0 or check_pos.y >= _current_level.size_y:
+					return true
+				if check_pos.z < 0 or check_pos.z >= _current_level.size_z:
+					return true
+				
+				# Check if cell is already occupied
+				if _current_level.has_tile(check_pos):
+					return true
+	
+	return false
+
+func _get_selected_tile_definition() -> XtremeTileDefinition:
+	if not _current_palette:
+		return null
+	return _current_palette.get_tile(_selected_tile_id)
 
 func _update_rect_preview(current_pos: Vector3i) -> void:
 	if not _rect_preview_mesh or not _grid_settings:
@@ -1188,14 +1424,39 @@ func _update_rect_preview(current_pos: Vector3i) -> void:
 		_rect_preview_mesh.visible = false
 		return
 	
+	# Get tile definition and size
+	var tile_def := _get_selected_tile_definition()
+	var tile_size := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_size = tile_def.get_rotated_size(_current_rotation)
+	
 	var cell := _grid_settings.get_cell_size()
 	var min_x := mini(_rect_drag_start.x, current_pos.x)
 	var max_x := maxi(_rect_drag_start.x, current_pos.x) + 1
 	var min_z := mini(_rect_drag_start.z, current_pos.z)
 	var max_z := maxi(_rect_drag_start.z, current_pos.z) + 1
 	
+	# For multi-cell tiles, snap the preview to show how many tiles will fit
+	var rect_width := max_x - min_x
+	var rect_depth := max_z - min_z
+	var tiles_x := rect_width / tile_size.x
+	var tiles_z := rect_depth / tile_size.z
+	
+	# Show snapped preview size
+	var snapped_width := tiles_x * tile_size.x
+	var snapped_depth := tiles_z * tile_size.z
+	
+	if snapped_width < tile_size.x:
+		snapped_width = tile_size.x
+	if snapped_depth < tile_size.z:
+		snapped_depth = tile_size.z
+	
 	var world_min := Vector3(min_x * cell.x, _current_y_level * cell.y, min_z * cell.z)
-	var world_max := Vector3(max_x * cell.x, (_current_y_level + 1) * cell.y, max_z * cell.z)
+	var world_max := Vector3(
+		(min_x + snapped_width) * cell.x, 
+		(_current_y_level + tile_size.y) * cell.y, 
+		(min_z + snapped_depth) * cell.z
+	)
 	var center := (world_min + world_max) / 2.0
 	var size := world_max - world_min
 	
@@ -1561,6 +1822,30 @@ func _create_or_update_visualizer() -> void:
 	_grid_visualizer.grid_settings = _grid_settings
 	_grid_visualizer.level_data = _current_level
 	_grid_visualizer.tile_palette = _current_palette
+	
+	# Sync visualizer settings from UI checkboxes
+	var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
+	var dist_check := _main_dock.find_child("DistanceEffectsEnabled", true, false) as CheckBox
+	var curve_slider := _main_dock.find_child("CurveIntensity", true, false) as HSlider
+	var dist_slider := _main_dock.find_child("EffectMaxDist", true, false) as HSlider
+	var wire_slider := _main_dock.find_child("WireframeStart", true, false) as HSlider
+	var dissolve_slider := _main_dock.find_child("DissolveStart", true, false) as HSlider
+	
+	# Default to OFF for both previews unless explicitly enabled in UI
+	_grid_visualizer.curved_preview_enabled = curve_check.button_pressed if curve_check else false
+	_grid_visualizer.distance_effects_enabled = dist_check.button_pressed if dist_check else false
+	
+	if curve_slider:
+		_grid_visualizer.curve_intensity = curve_slider.value
+	if dist_slider:
+		_grid_visualizer.effect_max_distance = dist_slider.value
+	if wire_slider:
+		_grid_visualizer.wireframe_start = wire_slider.value
+		_grid_visualizer.wireframe_full = wire_slider.value + 0.3  # Sensible default
+	if dissolve_slider:
+		_grid_visualizer.dissolve_start = dissolve_slider.value
+		_grid_visualizer.dissolve_full = dissolve_slider.value + 0.4  # Sensible default
+	
 	scene_root.add_child(_grid_visualizer)
 	# Do NOT set owner - this prevents saving with scene
 	_create_grid_lines(scene_root)
@@ -1596,11 +1881,11 @@ func _create_selection_box(parent: Node) -> void:
 func _create_brush_preview(parent: Node) -> void:
 	_brush_preview_mesh = MeshInstance3D.new()
 	_brush_preview_mesh.name = "XtremeBrushPreview_TEMP"
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.0, 1.0, 0.5, 0.25)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_brush_preview_mesh.material_override = mat
+	_brush_preview_material = StandardMaterial3D.new()
+	_brush_preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_brush_preview_material.albedo_color = BRUSH_COLOR_VALID
+	_brush_preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_brush_preview_mesh.material_override = _brush_preview_material
 	_brush_preview_mesh.visible = false
 	parent.add_child(_brush_preview_mesh)
 	# Do NOT set owner - this prevents saving with scene
@@ -1635,17 +1920,53 @@ func _update_grid_lines() -> void:
 	var im := ImmediateMesh.new()
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
 	var cell := _grid_settings.get_cell_size()
-	var y_pos := _current_y_level * cell.y
-	var width := _current_level.size_x
-	var depth := _current_level.size_z
-	for z in range(depth + 1):
-		var z_pos := z * cell.z
-		im.surface_add_vertex(Vector3(0, y_pos, z_pos))
-		im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
-	for x in range(width + 1):
-		var x_pos := x * cell.x
-		im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
-		im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
+	
+	match _grid_orientation:
+		GRID_XZ:  # Horizontal plane (floor/ceiling)
+			var y_pos := _current_y_level * cell.y
+			var width := _current_level.size_x
+			var depth := _current_level.size_z
+			# Lines along X axis
+			for z in range(depth + 1):
+				var z_pos := z * cell.z
+				im.surface_add_vertex(Vector3(0, y_pos, z_pos))
+				im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
+			# Lines along Z axis
+			for x in range(width + 1):
+				var x_pos := x * cell.x
+				im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
+				im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
+		
+		GRID_XY:  # Vertical plane facing Z (front wall)
+			var z_pos := _current_y_level * cell.z
+			var width := _current_level.size_x
+			var height := _current_level.size_y
+			# Lines along X axis
+			for y in range(height + 1):
+				var y_pos := y * cell.y
+				im.surface_add_vertex(Vector3(0, y_pos, z_pos))
+				im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
+			# Lines along Y axis
+			for x in range(width + 1):
+				var x_pos := x * cell.x
+				im.surface_add_vertex(Vector3(x_pos, 0, z_pos))
+				im.surface_add_vertex(Vector3(x_pos, height * cell.y, z_pos))
+		
+		GRID_YZ:  # Vertical plane facing X (side wall)
+			var x_pos := _current_y_level * cell.x
+			var depth := _current_level.size_z
+			var height := _current_level.size_y
+			# Lines along Z axis
+			for y in range(height + 1):
+				var y_pos := y * cell.y
+				im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
+				im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
+			# Lines along Y axis
+			for z in range(depth + 1):
+				var z_pos := z * cell.z
+				im.surface_add_vertex(Vector3(x_pos, 0, z_pos))
+				im.surface_add_vertex(Vector3(x_pos, height * cell.y, z_pos))
+	
 	im.surface_end()
 	_grid_lines_mesh.mesh = im
 	if _grid_visible_check:
@@ -1734,17 +2055,46 @@ func _show_context_menu(global_pos: Vector2) -> void:
 func _raycast_grid(origin: Vector3, direction: Vector3) -> Vector3i:
 	if not _current_level or not _grid_settings:
 		return Vector3i(-1, -1, -1)
+	
 	var cell_size := _grid_settings.get_cell_size()
-	var plane_y := _current_y_level * cell_size.y
-	if abs(direction.y) > 0.001:
-		var t := (plane_y - origin.y) / direction.y
-		if t > 0:
-			var hit := origin + direction * t
-			var grid_x := floori(hit.x / cell_size.x)
-			var grid_z := floori(hit.z / cell_size.z)
-			if grid_x >= 0 and grid_x < _current_level.size_x \
-				and grid_z >= 0 and grid_z < _current_level.size_z:
-				return Vector3i(grid_x, _current_y_level, grid_z)
+	
+	match _grid_orientation:
+		GRID_XZ:  # Horizontal plane (Y = constant)
+			var plane_y := _current_y_level * cell_size.y
+			if abs(direction.y) > 0.001:
+				var t := (plane_y - origin.y) / direction.y
+				if t > 0:
+					var hit := origin + direction * t
+					var grid_x := floori(hit.x / cell_size.x)
+					var grid_z := floori(hit.z / cell_size.z)
+					if grid_x >= 0 and grid_x < _current_level.size_x \
+						and grid_z >= 0 and grid_z < _current_level.size_z:
+						return Vector3i(grid_x, _current_y_level, grid_z)
+		
+		GRID_XY:  # Vertical plane facing Z (Z = constant)
+			var plane_z := _current_y_level * cell_size.z  # Using Y level spinbox for Z
+			if abs(direction.z) > 0.001:
+				var t := (plane_z - origin.z) / direction.z
+				if t > 0:
+					var hit := origin + direction * t
+					var grid_x := floori(hit.x / cell_size.x)
+					var grid_y := floori(hit.y / cell_size.y)
+					if grid_x >= 0 and grid_x < _current_level.size_x \
+						and grid_y >= 0 and grid_y < _current_level.size_y:
+						return Vector3i(grid_x, grid_y, _current_y_level)
+		
+		GRID_YZ:  # Vertical plane facing X (X = constant)
+			var plane_x := _current_y_level * cell_size.x  # Using Y level spinbox for X
+			if abs(direction.x) > 0.001:
+				var t := (plane_x - origin.x) / direction.x
+				if t > 0:
+					var hit := origin + direction * t
+					var grid_y := floori(hit.y / cell_size.y)
+					var grid_z := floori(hit.z / cell_size.z)
+					if grid_y >= 0 and grid_y < _current_level.size_y \
+						and grid_z >= 0 and grid_z < _current_level.size_z:
+						return Vector3i(_current_y_level, grid_y, grid_z)
+	
 	return Vector3i(-1, -1, -1)
 
 func _handle_click_pressed(pos: Vector3i) -> void:
@@ -1786,28 +2136,52 @@ func _handle_drag_paint(pos: Vector3i) -> void:
 	elif _edit_mode == 1:
 		_erase_at_single(pos)
 
-func _paint_at_single(center_pos: Vector3i) -> void:
-	var half := _brush_size / 2
-	for dx in range(_brush_size):
-		for dz in range(_brush_size):
-			var pos := Vector3i(
-				center_pos.x - half + dx,
-				center_pos.y,
-				center_pos.z - half + dz
-			)
-			if pos.x < 0 or pos.x >= _current_level.size_x:
-				continue
-			if pos.z < 0 or pos.z >= _current_level.size_z:
-				continue
-			
-			# Record before state if not already recorded
-			if pos not in _stroke_before:
-				if _current_level.has_tile(pos):
-					_stroke_before[pos] = _current_level.get_tile(pos)
-				_stroke_affected.append(pos)
-			
-			_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
-			_grid_visualizer.update_tile(pos)
+func _paint_at_single(anchor_pos: Vector3i) -> void:
+	# Get tile definition and size
+	var tile_def := _get_selected_tile_definition()
+	var tile_size := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_size = tile_def.get_rotated_size(_current_rotation)
+	
+	# Check if placement is blocked
+	if _is_placement_blocked(anchor_pos, tile_size):
+		return  # Can't place here
+	
+	# Record before state for ALL cells this tile will occupy
+	var cells_to_occupy: Array[Vector3i] = []
+	for x in range(tile_size.x):
+		for y in range(tile_size.y):
+			for z in range(tile_size.z):
+				var cell_pos := anchor_pos + Vector3i(x, y, z)
+				cells_to_occupy.append(cell_pos)
+				
+				# Record before state if not already recorded
+				if cell_pos not in _stroke_before:
+					if _current_level.has_tile(cell_pos):
+						_stroke_before[cell_pos] = _current_level.get_tile(cell_pos)
+					if cell_pos not in _stroke_affected:
+						_stroke_affected.append(cell_pos)
+	
+	# For single-cell tiles, just place normally
+	if tile_size == Vector3i(1, 1, 1):
+		_current_level.set_tile(anchor_pos, _selected_tile_id, _current_rotation)
+		_grid_visualizer.update_tile(anchor_pos)
+	else:
+		# For multi-cell tiles, use the multi-cell placement system
+		# Place anchor tile
+		_current_level.set_tile(anchor_pos, _selected_tile_id, _current_rotation)
+		
+		# Mark other cells as occupied by this multi-cell object
+		for x in range(tile_size.x):
+			for y in range(tile_size.y):
+				for z in range(tile_size.z):
+					var cell_pos := anchor_pos + Vector3i(x, y, z)
+					if cell_pos != anchor_pos:
+						_current_level.set_tile(cell_pos, &"_multicell_part", Vector3i.ZERO)
+		
+		# Update visuals for all affected cells
+		for cell_pos in cells_to_occupy:
+			_grid_visualizer.update_tile(cell_pos)
 
 func _erase_at_single(center_pos: Vector3i) -> void:
 	var half := _brush_size / 2
@@ -1845,21 +2219,91 @@ func _handle_rect_release(pos: Vector3i) -> void:
 	if pos.x < 0:
 		pos = _rect_drag_start
 	
+	# Get tile definition and size
+	var tile_def := _get_selected_tile_definition()
+	var tile_size := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_size = tile_def.get_rotated_size(_current_rotation)
+	
 	var min_x := mini(_rect_drag_start.x, pos.x)
 	var max_x := maxi(_rect_drag_start.x, pos.x)
 	var min_z := mini(_rect_drag_start.z, pos.z)
 	var max_z := maxi(_rect_drag_start.z, pos.z)
 	
+	# Calculate how many tiles can fit in the rect
+	var rect_width := max_x - min_x + 1
+	var rect_depth := max_z - min_z + 1
+	
+	# For multi-cell tiles, snap to tile size grid and only place full tiles
+	var tiles_x := rect_width / tile_size.x
+	var tiles_z := rect_depth / tile_size.z
+	
+	if tiles_x < 1 or tiles_z < 1:
+		_set_status("Area too small for this tile")
+		return
+	
+	# Collect all cells that will be affected
 	var affected: Array[Vector3i] = []
-	for x in range(min_x, max_x + 1):
-		for z in range(min_z, max_z + 1):
-			affected.append(Vector3i(x, _current_y_level, z))
+	var tile_anchors: Array[Vector3i] = []
+	
+	for tx in range(tiles_x):
+		for tz in range(tiles_z):
+			var anchor := Vector3i(
+				min_x + tx * tile_size.x,
+				_current_y_level,
+				min_z + tz * tile_size.z
+			)
+			
+			# Check if this tile position is blocked
+			var blocked := false
+			for x in range(tile_size.x):
+				for y in range(tile_size.y):
+					for z in range(tile_size.z):
+						var cell_pos := anchor + Vector3i(x, y, z)
+						if cell_pos.x >= _current_level.size_x or cell_pos.z >= _current_level.size_z:
+							blocked = true
+							break
+						if cell_pos.y >= _current_level.size_y:
+							blocked = true
+							break
+						# Don't check for existing tiles if we're filling the whole rect
+						# (rect fill should overwrite)
+					if blocked: break
+				if blocked: break
+			
+			if not blocked:
+				tile_anchors.append(anchor)
+				# Add all cells this tile will occupy
+				for x in range(tile_size.x):
+					for y in range(tile_size.y):
+						for z in range(tile_size.z):
+							var cell_pos := anchor + Vector3i(x, y, z)
+							if cell_pos not in affected:
+								affected.append(cell_pos)
+	
+	if tile_anchors.is_empty():
+		_set_status("Cannot place tiles in this area")
+		return
+	
 	var before := _capture_tiles_in_region(affected)
 	
+	# Place the tiles
 	var count := 0
-	for tile_pos in affected:
-		_current_level.set_tile(tile_pos, _selected_tile_id)
-		_grid_visualizer.update_tile(tile_pos)
+	for anchor in tile_anchors:
+		if tile_size == Vector3i(1, 1, 1):
+			_current_level.set_tile(anchor, _selected_tile_id, _current_rotation)
+			_grid_visualizer.update_tile(anchor)
+		else:
+			# Place anchor tile
+			_current_level.set_tile(anchor, _selected_tile_id, _current_rotation)
+			# Mark other cells as occupied
+			for x in range(tile_size.x):
+				for y in range(tile_size.y):
+					for z in range(tile_size.z):
+						var cell_pos := anchor + Vector3i(x, y, z)
+						if cell_pos != anchor:
+							_current_level.set_tile(cell_pos, &"_multicell_part", Vector3i.ZERO)
+						_grid_visualizer.update_tile(cell_pos)
 		count += 1
 	
 	var after := _capture_tiles_in_region(affected)
@@ -1874,17 +2318,96 @@ func _handle_select_release(pos: Vector3i) -> void:
 	if pos.x < 0:
 		pos = _selection_start
 	
-	_selection_end = pos
+	# Calculate initial selection bounds
+	var min_pos := Vector3i(
+		mini(_selection_start.x, pos.x),
+		mini(_selection_start.y, pos.y),
+		mini(_selection_start.z, pos.z)
+	)
+	var max_pos := Vector3i(
+		maxi(_selection_start.x, pos.x),
+		maxi(_selection_start.y, pos.y),
+		maxi(_selection_start.z, pos.z)
+	)
+	
+	# Expand selection to include full multi-cell objects
+	# Check each cell in selection for multi-cell parts and expand bounds
+	var expanded := true
+	while expanded:
+		expanded = false
+		for x in range(min_pos.x, max_pos.x + 1):
+			for y in range(min_pos.y, max_pos.y + 1):
+				for z in range(min_pos.z, max_pos.z + 1):
+					var check_pos := Vector3i(x, y, z)
+					var tile_id := _current_level.get_tile(check_pos)
+					
+					if tile_id == &"_multicell_part":
+						# Find the anchor of this multi-cell object and include all its cells
+						var anchor := _find_multicell_anchor(check_pos)
+						if anchor.x >= 0:
+							var anchor_tile_id := _current_level.get_tile(anchor)
+							var anchor_def := _current_palette.get_tile(anchor_tile_id) if _current_palette else null
+							if anchor_def:
+								var rotation := _current_level.get_tile_rotation(anchor)
+								var size := anchor_def.get_rotated_size(rotation)
+								# Expand bounds to include entire multi-cell object
+								var obj_max := anchor + size - Vector3i.ONE
+								if anchor.x < min_pos.x or anchor.y < min_pos.y or anchor.z < min_pos.z:
+									min_pos.x = mini(min_pos.x, anchor.x)
+									min_pos.y = mini(min_pos.y, anchor.y)
+									min_pos.z = mini(min_pos.z, anchor.z)
+									expanded = true
+								if obj_max.x > max_pos.x or obj_max.y > max_pos.y or obj_max.z > max_pos.z:
+									max_pos.x = maxi(max_pos.x, obj_max.x)
+									max_pos.y = maxi(max_pos.y, obj_max.y)
+									max_pos.z = maxi(max_pos.z, obj_max.z)
+									expanded = true
+					elif tile_id != &"" and tile_id != &"empty":
+						# Check if this is a multi-cell anchor
+						var tile_def := _current_palette.get_tile(tile_id) if _current_palette else null
+						if tile_def and tile_def.is_multicell():
+							var rotation := _current_level.get_tile_rotation(check_pos)
+							var size := tile_def.get_rotated_size(rotation)
+							var obj_max := check_pos + size - Vector3i.ONE
+							if obj_max.x > max_pos.x or obj_max.y > max_pos.y or obj_max.z > max_pos.z:
+								max_pos.x = maxi(max_pos.x, obj_max.x)
+								max_pos.y = maxi(max_pos.y, obj_max.y)
+								max_pos.z = maxi(max_pos.z, obj_max.z)
+								expanded = true
+	
+	_selection_start = min_pos
+	_selection_end = max_pos
 	_has_selection = true
 	_update_selection_info()
 	_update_selection_visual()
 	
-	var size := Vector3i(
-		absi(_selection_end.x - _selection_start.x) + 1,
-		1,
-		absi(_selection_end.z - _selection_start.z) + 1
-	)
+	var size := max_pos - min_pos + Vector3i.ONE
 	_set_status("Selected: %dx%dx%d" % [size.x, size.y, size.z])
+
+func _find_multicell_anchor(part_pos: Vector3i) -> Vector3i:
+	# Search nearby cells for the anchor of a multi-cell object
+	# The anchor is the cell that contains the actual tile_id (not _multicell_part)
+	# Search in a reasonable radius (up to 9 cells in each direction for 9x9x9 max size)
+	for dx in range(-8, 1):
+		for dy in range(-8, 1):
+			for dz in range(-8, 1):
+				var check := part_pos + Vector3i(dx, dy, dz)
+				if check.x < 0 or check.y < 0 or check.z < 0:
+					continue
+				var tile_id := _current_level.get_tile(check)
+				if tile_id != &"" and tile_id != &"_multicell_part":
+					# Check if this anchor's footprint includes part_pos
+					var tile_def := _current_palette.get_tile(tile_id) if _current_palette else null
+					if tile_def and tile_def.is_multicell():
+						var rotation := _current_level.get_tile_rotation(check)
+						var size := tile_def.get_rotated_size(rotation)
+						var obj_min := check
+						var obj_max := check + size - Vector3i.ONE
+						if part_pos.x >= obj_min.x and part_pos.x <= obj_max.x \
+							and part_pos.y >= obj_min.y and part_pos.y <= obj_max.y \
+							and part_pos.z >= obj_min.z and part_pos.z <= obj_max.z:
+							return check
+	return Vector3i(-1, -1, -1)
 
 func _bucket_fill_at(start_pos: Vector3i) -> void:
 	var clicked_tile := _current_level.get_tile(start_pos)
@@ -1901,13 +2424,20 @@ func _bucket_fill_at(start_pos: Vector3i) -> void:
 		_bucket_fill_replace(start_pos, clicked_tile)
 
 func _bucket_fill_empty(start_pos: Vector3i) -> void:
-	var affected: Array[Vector3i] = []
-	var to_fill: Array[Vector3i] = [start_pos]
+	# Get tile definition and size
+	var tile_def := _get_selected_tile_definition()
+	var tile_size := Vector3i(1, 1, 1)
+	if tile_def:
+		tile_size = tile_def.get_rotated_size(_current_rotation)
+	
+	# First, flood fill to find all connected empty cells
+	var empty_cells: Array[Vector3i] = []
+	var to_check: Array[Vector3i] = [start_pos]
 	var visited := {}
 	visited[start_pos] = true
 	
-	while to_fill.size() > 0 and affected.size() < 10000:
-		var pos: Vector3i = to_fill.pop_front()
+	while to_check.size() > 0 and empty_cells.size() < 10000:
+		var pos: Vector3i = to_check.pop_front()
 		if pos.x < 0 or pos.x >= _current_level.size_x:
 			continue
 		if pos.z < 0 or pos.z >= _current_level.size_z:
@@ -1915,7 +2445,7 @@ func _bucket_fill_empty(start_pos: Vector3i) -> void:
 		if _current_level.has_tile(pos):
 			continue
 		
-		affected.append(pos)
+		empty_cells.append(pos)
 		
 		# Only check face-adjacent neighbors (no diagonals), same Y level
 		var neighbors := [
@@ -1927,21 +2457,95 @@ func _bucket_fill_empty(start_pos: Vector3i) -> void:
 		for neighbor in neighbors:
 			if neighbor not in visited:
 				visited[neighbor] = true
-				to_fill.append(neighbor)
+				to_check.append(neighbor)
 	
-	if affected.is_empty():
+	if empty_cells.is_empty():
 		return
 	
-	var before := _capture_tiles_in_region(affected)
+	# For single-cell tiles, just fill all empty cells
+	if tile_size == Vector3i(1, 1, 1):
+		var before := _capture_tiles_in_region(empty_cells)
+		
+		for pos in empty_cells:
+			_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
+			_grid_visualizer.update_tile(pos)
+		
+		var after := _capture_tiles_in_region(empty_cells)
+		_record_undo("Bucket Fill", before, after)
+		_set_status("Bucket filled %d empty cells" % empty_cells.size())
+		return
 	
-	for pos in affected:
-		_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
-		_grid_visualizer.update_tile(pos)
+	# For multi-cell tiles, place tiles grid-aligned within the empty area
+	# Find bounds of empty area
+	var min_pos := empty_cells[0]
+	var max_pos := empty_cells[0]
+	for pos in empty_cells:
+		min_pos.x = mini(min_pos.x, pos.x)
+		min_pos.z = mini(min_pos.z, pos.z)
+		max_pos.x = maxi(max_pos.x, pos.x)
+		max_pos.z = maxi(max_pos.z, pos.z)
 	
-	var after := _capture_tiles_in_region(affected)
+	# Convert empty_cells to a set for fast lookup
+	var empty_set := {}
+	for pos in empty_cells:
+		empty_set[pos] = true
+	
+	# Try to place tiles grid-aligned
+	var tile_anchors: Array[Vector3i] = []
+	var all_affected: Array[Vector3i] = []
+	
+	var x := min_pos.x
+	while x <= max_pos.x:
+		var z := min_pos.z
+		while z <= max_pos.z:
+			var anchor := Vector3i(x, _current_y_level, z)
+			
+			# Check if ALL cells for this tile are in the empty set
+			var can_place := true
+			var cells_needed: Array[Vector3i] = []
+			
+			for tx in range(tile_size.x):
+				for ty in range(tile_size.y):
+					for tz in range(tile_size.z):
+						var cell := anchor + Vector3i(tx, ty, tz)
+						cells_needed.append(cell)
+						if cell not in empty_set:
+							can_place = false
+							break
+					if not can_place: break
+				if not can_place: break
+			
+			if can_place:
+				tile_anchors.append(anchor)
+				# Mark these cells as "used" so we don't overlap
+				for cell in cells_needed:
+					empty_set.erase(cell)
+					if cell not in all_affected:
+						all_affected.append(cell)
+			
+			z += tile_size.z
+		x += tile_size.x
+	
+	if tile_anchors.is_empty():
+		_set_status("No space for tiles of this size")
+		return
+	
+	var before := _capture_tiles_in_region(all_affected)
+	
+	# Place the tiles
+	for anchor in tile_anchors:
+		_current_level.set_tile(anchor, _selected_tile_id, _current_rotation)
+		for tx in range(tile_size.x):
+			for ty in range(tile_size.y):
+				for tz in range(tile_size.z):
+					var cell := anchor + Vector3i(tx, ty, tz)
+					if cell != anchor:
+						_current_level.set_tile(cell, &"_multicell_part", Vector3i.ZERO)
+					_grid_visualizer.update_tile(cell)
+	
+	var after := _capture_tiles_in_region(all_affected)
 	_record_undo("Bucket Fill", before, after)
-	
-	_set_status("Bucket filled %d empty cells" % affected.size())
+	_set_status("Bucket filled %d tiles" % tile_anchors.size())
 
 func _bucket_fill_replace(start_pos: Vector3i, target_tile_id: StringName) -> void:
 	var affected: Array[Vector3i] = []
@@ -2006,8 +2610,18 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed and not key.echo:
+			# Grid orientation hotkeys (1, 2, 3)
+			if key.keycode == KEY_1:
+				_set_grid_orientation(GRID_XZ)
+				get_viewport().set_input_as_handled()
+			elif key.keycode == KEY_2:
+				_set_grid_orientation(GRID_XY)
+				get_viewport().set_input_as_handled()
+			elif key.keycode == KEY_3:
+				_set_grid_orientation(GRID_YZ)
+				get_viewport().set_input_as_handled()
 			# Rotation hotkeys
-			if key.keycode == KEY_R:
+			elif key.keycode == KEY_R:
 				if key.shift_pressed:
 					_cycle_rotation_x()
 				elif key.ctrl_pressed:
