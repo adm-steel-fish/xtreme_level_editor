@@ -37,7 +37,7 @@ var _current_level: XtremeLevelData
 var _current_palette: XtremeTilePalette
 var _grid_settings: XtremeGridSettings
 var _selected_tile_id: StringName = &"solid"
-var _edit_mode: int = 0  # 0=paint, 1=erase, 2=select, 3=rect_fill, 4=bucket_fill
+var _edit_mode: int = 0  # 0=paint, 1=erase, 2=select, 3=rect_fill, 4=bucket_fill, 5=water_zone
 var _current_y_level: int = 0
 var _brush_size: int = 1
 var _is_plugin_active: bool = false
@@ -75,6 +75,60 @@ var _redo_history: Array[Dictionary] = []
 
 # Last known mouse position
 var _last_mouse_pos: Vector2 = Vector2.ZERO
+
+# ============ Phase 3: Level Systems ============
+
+# Level manifest for multi-chunk-set levels
+var _current_manifest: XtremeLevelManifest
+var _current_chunk_set: XtremeChunkSetData
+
+# Water zone editing state
+var _water_zone_start: Vector3i = Vector3i(-1, -1, -1)
+var _water_zone_dragging: bool = false
+var _water_zone_preview: MeshInstance3D
+
+# Pipe/portal editing
+var _editing_pipe: XtremePipeConnection
+var _pipe_edit_popup: Window
+
+# Level Overview panel
+var _level_overview_window: Window
+var _level_overview_graph: Control
+
+# Ghost chunk sets (semi-transparent neighboring chunk sets)
+var _ghost_enabled: bool = false
+var _ghost_visualizers: Array[Node3D] = []
+
+# Chunk set dropdown
+var _chunk_set_selector: OptionButton
+
+# ============ Phase 4: Path Systems ============
+
+# Path editing mode: 0=Rail, 1=Coaster, 2=Light Dash
+var _path_edit_mode: int = 0
+
+# Path tool mode: 0=Place, 1=Select, 2=Edit, 3=Delete
+var _path_tool_mode: int = 0
+
+# Currently editing path
+var _current_rail: XtremeGrindRail
+var _current_coaster: XtremeRollerCoaster
+var _current_dash_trail: XtremeLightDashTrail
+
+# All paths in current chunk set
+var _rails: Array[XtremeGrindRail] = []
+var _coasters: Array[XtremeRollerCoaster] = []
+var _dash_trails: Array[XtremeLightDashTrail] = []
+
+# Selected path for editing
+var _selected_path_index: int = -1
+
+# Path preview meshes
+var _path_preview_mesh: MeshInstance3D
+var _path_points_mesh: MeshInstance3D
+
+# Is path currently being drawn
+var _path_drawing: bool = false
 
 func _get_plugin_name() -> String:
 	return PLUGIN_NAME
@@ -279,8 +333,9 @@ func _on_context_menu_selected(id: int) -> void:
 func _set_tool(tool_id: int) -> void:
 	_edit_mode = tool_id
 	_clear_selection()
-	var tool_names := ["Paint", "Erase", "Select", "Rect Fill", "Bucket Fill"]
-	_set_status("Tool: %s" % tool_names[tool_id])
+	var tool_names := ["Paint", "Erase", "Select", "Rect Fill", "Bucket Fill", "Water Zone"]
+	if tool_id < tool_names.size():
+		_set_status("Tool: %s" % tool_names[tool_id])
 	_update_tool_buttons()
 
 func _update_tool_buttons() -> void:
@@ -291,12 +346,14 @@ func _update_tool_buttons() -> void:
 	var select_btn := _main_dock.find_child("SelectBtn", true, false) as Button
 	var rect_btn := _main_dock.find_child("RectFillBtn", true, false) as Button
 	var bucket_btn := _main_dock.find_child("BucketBtn", true, false) as Button
+	var water_btn := _main_dock.find_child("WaterZoneBtn", true, false) as Button
 	
 	if paint_btn: paint_btn.button_pressed = (_edit_mode == 0)
 	if erase_btn: erase_btn.button_pressed = (_edit_mode == 1)
 	if select_btn: select_btn.button_pressed = (_edit_mode == 2)
 	if rect_btn: rect_btn.button_pressed = (_edit_mode == 3)
 	if bucket_btn: bucket_btn.button_pressed = (_edit_mode == 4)
+	if water_btn: water_btn.button_pressed = (_edit_mode == 5)
 
 func _change_y_level(delta: int) -> void:
 	if not _current_level:
@@ -404,25 +461,49 @@ func _create_editor_dock() -> void:
 	header.add_theme_font_size_override("font_size", 16)
 	_main_dock.add_child(header)
 	
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_main_dock.add_child(scroll)
-	
-	var content := VBoxContainer.new()
-	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(content)
-	
-	content.add_child(HSeparator.new())
-	
-	# Editing Toggle
+	# Editing Toggle (outside tabs - always visible)
 	var edit_toggle := CheckBox.new()
 	edit_toggle.name = "EditingEnabled"
 	edit_toggle.text = "Enable Level Editing"
 	edit_toggle.toggled.connect(_on_editing_toggled)
-	content.add_child(edit_toggle)
+	_main_dock.add_child(edit_toggle)
 	
-	content.add_child(HSeparator.new())
+	_main_dock.add_child(HSeparator.new())
+	
+	# Tab Container for Level Tools and Rail Tools
+	var tab_container := TabContainer.new()
+	tab_container.name = "ToolTabs"
+	tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_main_dock.add_child(tab_container)
+	
+	# Create Level Tools tab
+	var level_tools := _create_level_tools_tab()
+	level_tools.name = "Level Tools"
+	tab_container.add_child(level_tools)
+	
+	# Create Rail Tools tab
+	var rail_tools := _create_rail_tools_tab()
+	rail_tools.name = "Rail Tools"
+	tab_container.add_child(rail_tools)
+	
+	# Status label (outside tabs - always visible)
+	var status := Label.new()
+	status.name = "Status"
+	status.text = "Check 'Enable Level Editing' to start"
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.add_theme_color_override("font_color", Color.GRAY)
+	_main_dock.add_child(status)
+	
+	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _main_dock)
+
+func _create_level_tools_tab() -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content)
 	
 	# Level Management
 	content.add_child(_make_label("Level"))
@@ -440,6 +521,42 @@ func _create_editor_dock() -> void:
 	save_btn.pressed.connect(_on_save_level)
 	level_buttons.add_child(save_btn)
 	content.add_child(level_buttons)
+	
+	content.add_child(HSeparator.new())
+	
+	# ============ CHUNK SET MANAGEMENT (Phase 3) ============
+	content.add_child(_make_label("Chunk Set"))
+	
+	var chunk_row := HBoxContainer.new()
+	_chunk_set_selector = OptionButton.new()
+	_chunk_set_selector.name = "ChunkSetSelector"
+	_chunk_set_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chunk_set_selector.item_selected.connect(_on_chunk_set_selected)
+	chunk_row.add_child(_chunk_set_selector)
+	
+	var add_chunk_btn := Button.new()
+	add_chunk_btn.text = "+"
+	add_chunk_btn.tooltip_text = "Add new Chunk Set"
+	add_chunk_btn.custom_minimum_size.x = 30
+	add_chunk_btn.pressed.connect(_on_add_chunk_set)
+	chunk_row.add_child(add_chunk_btn)
+	content.add_child(chunk_row)
+	
+	var chunk_buttons := HBoxContainer.new()
+	var overview_btn := Button.new()
+	overview_btn.name = "LevelOverviewBtn"
+	overview_btn.text = "Level Overview"
+	overview_btn.pressed.connect(_show_level_overview)
+	overview_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chunk_buttons.add_child(overview_btn)
+	
+	var ghost_toggle := CheckBox.new()
+	ghost_toggle.name = "GhostToggle"
+	ghost_toggle.text = "Ghosts"
+	ghost_toggle.tooltip_text = "Show neighboring chunk sets as ghosts"
+	ghost_toggle.toggled.connect(_on_ghost_toggled)
+	chunk_buttons.add_child(ghost_toggle)
+	content.add_child(chunk_buttons)
 	
 	content.add_child(HSeparator.new())
 	
@@ -582,6 +699,15 @@ func _create_editor_dock() -> void:
 	bucket_btn.button_group = tool_group
 	bucket_btn.pressed.connect(func(): _set_tool(4))
 	tool_row2.add_child(bucket_btn)
+	
+	var water_btn := Button.new()
+	water_btn.name = "WaterZoneBtn"
+	water_btn.text = "Water"
+	water_btn.toggle_mode = true
+	water_btn.button_group = tool_group
+	water_btn.pressed.connect(func(): _set_tool(5))
+	water_btn.tooltip_text = "Draw water zone volumes"
+	tool_row2.add_child(water_btn)
 	content.add_child(tool_row2)
 	
 	# Undo/Redo buttons
@@ -924,17 +1050,254 @@ func _create_editor_dock() -> void:
 	export_btn.pressed.connect(_on_export_level)
 	content.add_child(export_btn)
 	
+	return scroll
+
+func _create_rail_tools_tab() -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content)
+	
+	# Rail Tools Header
+	content.add_child(_make_label("Path Tools"))
 	content.add_child(HSeparator.new())
 	
-	# Status
-	var status := Label.new()
-	status.name = "Status"
-	status.text = "Check 'Enable Level Editing' to start"
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status.add_theme_color_override("font_color", Color.GRAY)
-	_main_dock.add_child(status)
+	# Path Type Selection
+	content.add_child(_make_label("Path Type"))
+	var path_type_group := ButtonGroup.new()
+	var path_type_row := HBoxContainer.new()
 	
-	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _main_dock)
+	var rail_btn := Button.new()
+	rail_btn.name = "RailTypeBtn"
+	rail_btn.text = "Rail"
+	rail_btn.toggle_mode = true
+	rail_btn.button_pressed = true
+	rail_btn.button_group = path_type_group
+	rail_btn.pressed.connect(func(): _set_path_edit_mode(0))
+	rail_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	path_type_row.add_child(rail_btn)
+	
+	var coaster_btn := Button.new()
+	coaster_btn.name = "CoasterTypeBtn"
+	coaster_btn.text = "Coaster"
+	coaster_btn.toggle_mode = true
+	coaster_btn.button_group = path_type_group
+	coaster_btn.pressed.connect(func(): _set_path_edit_mode(1))
+	coaster_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	path_type_row.add_child(coaster_btn)
+	
+	var dash_btn := Button.new()
+	dash_btn.name = "DashTypeBtn"
+	dash_btn.text = "Dash"
+	dash_btn.toggle_mode = true
+	dash_btn.button_group = path_type_group
+	dash_btn.pressed.connect(func(): _set_path_edit_mode(2))
+	dash_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	path_type_row.add_child(dash_btn)
+	content.add_child(path_type_row)
+	
+	content.add_child(HSeparator.new())
+	
+	# Rail Tools
+	content.add_child(_make_label("Edit Mode"))
+	var rail_tool_group := ButtonGroup.new()
+	var rail_tool_row := HBoxContainer.new()
+	
+	var place_btn := Button.new()
+	place_btn.name = "PathPlaceBtn"
+	place_btn.text = "Place"
+	place_btn.toggle_mode = true
+	place_btn.button_pressed = true
+	place_btn.button_group = rail_tool_group
+	place_btn.pressed.connect(func(): _set_path_tool(0))
+	place_btn.tooltip_text = "Click to place path points"
+	rail_tool_row.add_child(place_btn)
+	
+	var select_path_btn := Button.new()
+	select_path_btn.name = "PathSelectBtn"
+	select_path_btn.text = "Select"
+	select_path_btn.toggle_mode = true
+	select_path_btn.button_group = rail_tool_group
+	select_path_btn.pressed.connect(func(): _set_path_tool(1))
+	select_path_btn.tooltip_text = "Click to select existing paths"
+	rail_tool_row.add_child(select_path_btn)
+	
+	var edit_path_btn := Button.new()
+	edit_path_btn.name = "PathEditBtn"
+	edit_path_btn.text = "Edit"
+	edit_path_btn.toggle_mode = true
+	edit_path_btn.button_group = rail_tool_group
+	edit_path_btn.pressed.connect(func(): _set_path_tool(2))
+	edit_path_btn.tooltip_text = "Move path control points"
+	rail_tool_row.add_child(edit_path_btn)
+	
+	var delete_path_btn := Button.new()
+	delete_path_btn.name = "PathDeleteBtn"
+	delete_path_btn.text = "Delete"
+	delete_path_btn.toggle_mode = true
+	delete_path_btn.button_group = rail_tool_group
+	delete_path_btn.pressed.connect(func(): _set_path_tool(3))
+	delete_path_btn.tooltip_text = "Click to delete paths"
+	rail_tool_row.add_child(delete_path_btn)
+	content.add_child(rail_tool_row)
+	
+	content.add_child(HSeparator.new())
+	
+	# Path Actions
+	content.add_child(_make_label("Actions"))
+	var action_row1 := HBoxContainer.new()
+	
+	var new_path_btn := Button.new()
+	new_path_btn.name = "NewPathBtn"
+	new_path_btn.text = "New Path"
+	new_path_btn.pressed.connect(_on_new_path)
+	new_path_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row1.add_child(new_path_btn)
+	
+	var finish_path_btn := Button.new()
+	finish_path_btn.name = "FinishPathBtn"
+	finish_path_btn.text = "Finish Path"
+	finish_path_btn.pressed.connect(_on_finish_path)
+	finish_path_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row1.add_child(finish_path_btn)
+	content.add_child(action_row1)
+	
+	var action_row2 := HBoxContainer.new()
+	
+	var close_loop_btn := Button.new()
+	close_loop_btn.name = "CloseLoopBtn"
+	close_loop_btn.text = "Close Loop"
+	close_loop_btn.pressed.connect(_on_close_path_loop)
+	close_loop_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row2.add_child(close_loop_btn)
+	
+	var auto_fill_btn := Button.new()
+	auto_fill_btn.name = "AutoFillBtn"
+	auto_fill_btn.text = "Auto-Fill"
+	auto_fill_btn.pressed.connect(_on_auto_fill_path)
+	auto_fill_btn.tooltip_text = "Fill gaps in light dash trails"
+	auto_fill_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row2.add_child(auto_fill_btn)
+	content.add_child(action_row2)
+	
+	content.add_child(HSeparator.new())
+	
+	# Grind Rail Properties (visible when Rail selected)
+	var rail_props := VBoxContainer.new()
+	rail_props.name = "RailProperties"
+	
+	rail_props.add_child(_make_label("Rail Properties"))
+	
+	var speed_row := HBoxContainer.new()
+	var speed_label := Label.new()
+	speed_label.text = "Speed:"
+	speed_label.custom_minimum_size.x = 60
+	speed_row.add_child(speed_label)
+	var speed_spin := SpinBox.new()
+	speed_spin.name = "RailSpeedSpin"
+	speed_spin.min_value = 0.1
+	speed_spin.max_value = 5.0
+	speed_spin.step = 0.1
+	speed_spin.value = 1.0
+	speed_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	speed_row.add_child(speed_spin)
+	rail_props.add_child(speed_row)
+	
+	var allow_jump := CheckBox.new()
+	allow_jump.name = "RailAllowJump"
+	allow_jump.text = "Allow Jump Off"
+	allow_jump.button_pressed = true
+	rail_props.add_child(allow_jump)
+	
+	var allow_crouch := CheckBox.new()
+	allow_crouch.name = "RailAllowCrouch"
+	allow_crouch.text = "Crouch Boost"
+	allow_crouch.button_pressed = true
+	rail_props.add_child(allow_crouch)
+	
+	content.add_child(rail_props)
+	
+	# Roller Coaster Properties (visible when Coaster selected)
+	var coaster_props := VBoxContainer.new()
+	coaster_props.name = "CoasterProperties"
+	coaster_props.visible = false
+	
+	coaster_props.add_child(_make_label("Coaster Properties"))
+	
+	var base_speed_row := HBoxContainer.new()
+	var base_speed_label := Label.new()
+	base_speed_label.text = "Base Speed:"
+	base_speed_label.custom_minimum_size.x = 80
+	base_speed_row.add_child(base_speed_label)
+	var base_speed_spin := SpinBox.new()
+	base_speed_spin.name = "CoasterSpeedSpin"
+	base_speed_spin.min_value = 5.0
+	base_speed_spin.max_value = 50.0
+	base_speed_spin.step = 1.0
+	base_speed_spin.value = 15.0
+	base_speed_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	base_speed_row.add_child(base_speed_spin)
+	coaster_props.add_child(base_speed_row)
+	
+	var locked_check := CheckBox.new()
+	locked_check.name = "CoasterLocked"
+	locked_check.text = "Locked Ride (No Jump)"
+	locked_check.button_pressed = true
+	coaster_props.add_child(locked_check)
+	
+	content.add_child(coaster_props)
+	
+	# Light Dash Properties (visible when Dash selected)
+	var dash_props := VBoxContainer.new()
+	dash_props.name = "DashProperties"
+	dash_props.visible = false
+	
+	dash_props.add_child(_make_label("Light Dash Properties"))
+	
+	var dash_speed_row := HBoxContainer.new()
+	var dash_speed_label := Label.new()
+	dash_speed_label.text = "Dash Speed:"
+	dash_speed_label.custom_minimum_size.x = 80
+	dash_speed_row.add_child(dash_speed_label)
+	var dash_speed_spin := SpinBox.new()
+	dash_speed_spin.name = "DashSpeedSpin"
+	dash_speed_spin.min_value = 10.0
+	dash_speed_spin.max_value = 60.0
+	dash_speed_spin.step = 1.0
+	dash_speed_spin.value = 30.0
+	dash_speed_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dash_speed_row.add_child(dash_speed_spin)
+	dash_props.add_child(dash_speed_row)
+	
+	var dedicated_check := CheckBox.new()
+	dedicated_check.name = "DashDedicated"
+	dedicated_check.text = "Dedicated Rings"
+	dedicated_check.button_pressed = true
+	dedicated_check.tooltip_text = "Use transparent auto-replenish rings"
+	dash_props.add_child(dedicated_check)
+	
+	var works_regular := CheckBox.new()
+	works_regular.name = "DashWorksRegular"
+	works_regular.text = "Works with Regular Rings"
+	works_regular.button_pressed = true
+	dash_props.add_child(works_regular)
+	
+	content.add_child(dash_props)
+	
+	content.add_child(HSeparator.new())
+	
+	# Path List
+	content.add_child(_make_label("Paths in Level"))
+	var path_list := ItemList.new()
+	path_list.name = "PathList"
+	path_list.custom_minimum_size.y = 100
+	path_list.item_selected.connect(_on_path_list_selected)
+	content.add_child(path_list)
+	
+	return scroll
 
 func _make_label(text: String) -> Label:
 	var l := Label.new()
@@ -1643,6 +2006,17 @@ func _on_new_level() -> void:
 		_current_level.resize(int(size_x.value), int(size_y.value), int(size_z.value))
 		_y_level_spinbox.max_value = size_y.value - 1
 	
+	# Create manifest with default chunk set (Phase 3)
+	_current_manifest = XtremeLevelManifest.create_default(&"new_level", "New Level")
+	_current_chunk_set = _current_manifest.get_chunk_set(&"main")
+	if _current_chunk_set:
+		_current_chunk_set.size = Vector3i(
+			_current_level.size_x,
+			_current_level.size_y,
+			_current_level.size_z
+		)
+	_update_chunk_set_selector()
+	
 	# Clear undo history for new level
 	_undo_history.clear()
 	_redo_history.clear()
@@ -2019,6 +2393,9 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				if _select_dragging:
 					_handle_select_release(pos)
 					return AFTER_GUI_INPUT_STOP
+				if _water_zone_dragging:
+					_finish_water_zone(pos)
+					return AFTER_GUI_INPUT_STOP
 	
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -2044,6 +2421,10 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			# Update select preview while dragging
 			if _select_dragging:
 				_update_select_preview(pos)
+			
+			# Update water zone preview while dragging
+			if _water_zone_dragging:
+				_update_water_zone_preview(pos)
 	
 	return AFTER_GUI_INPUT_PASS
 
@@ -2115,6 +2496,8 @@ func _handle_click_pressed(pos: Vector3i) -> void:
 			_set_status("Rect Fill: Drag to size...")
 		4:  # Bucket Fill
 			_bucket_fill_at(pos)
+		5:  # Water Zone - start drag
+			_start_water_zone(pos)
 
 # Paint/Erase with undo support for strokes
 var _stroke_before: Dictionary = {}
@@ -2182,6 +2565,16 @@ func _paint_at_single(anchor_pos: Vector3i) -> void:
 		# Update visuals for all affected cells
 		for cell_pos in cells_to_occupy:
 			_grid_visualizer.update_tile(cell_pos)
+	
+	# Auto-configure special tile types (Phase 3)
+	if tile_def:
+		match tile_def.tile_type:
+			XtremeTileDefinition.TileType.TRANSPORT:
+				_auto_configure_transport_tile(anchor_pos, _selected_tile_id)
+			XtremeTileDefinition.TileType.GOAL:
+				_auto_configure_goal_tile(anchor_pos, _selected_tile_id)
+			XtremeTileDefinition.TileType.SPAWN:
+				_auto_configure_spawn_tile(anchor_pos, _selected_tile_id)
 
 func _erase_at_single(center_pos: Vector3i) -> void:
 	var half := _brush_size / 2
@@ -2636,3 +3029,760 @@ func _input(event: InputEvent) -> void:
 				else:
 					_undo()
 				get_viewport().set_input_as_handled()
+
+# ============ PHASE 3: Level Systems ============
+
+# ------------ Chunk Set Management ------------
+
+func _on_chunk_set_selected(index: int) -> void:
+	if not _current_manifest or index < 0:
+		return
+	
+	var chunk_ids := _current_manifest.get_chunk_set_ids()
+	if index >= chunk_ids.size():
+		return
+	
+	var chunk_id := chunk_ids[index]
+	_load_chunk_set(chunk_id)
+
+func _load_chunk_set(chunk_set_id: StringName) -> void:
+	if not _current_manifest:
+		return
+	
+	var chunk_set := _current_manifest.get_chunk_set(chunk_set_id)
+	if not chunk_set:
+		_set_status("Chunk set '%s' not found" % chunk_set_id)
+		return
+	
+	_current_chunk_set = chunk_set
+	
+	# Load the level data for this chunk set (or create new if doesn't exist)
+	if chunk_set.scene_path and FileAccess.file_exists(chunk_set.scene_path):
+		# In a full implementation, load the scene and extract level data
+		pass
+	else:
+		# Create new empty level data for this chunk set
+		if not _current_level:
+			_current_level = XtremeLevelData.new()
+			_current_level.initialize(_grid_settings)
+			_current_level.resize(chunk_set.size.x, chunk_set.size.y, chunk_set.size.z)
+	
+	# Update ghost chunk sets if enabled
+	if _ghost_enabled:
+		_update_ghost_chunk_sets()
+	
+	_set_status("Loaded chunk set: %s" % chunk_set.display_name)
+
+func _on_add_chunk_set() -> void:
+	if not _current_manifest:
+		# Create a new manifest if none exists
+		_current_manifest = XtremeLevelManifest.create_default(&"new_level", "New Level")
+	
+	# Generate unique ID
+	var base_id := "chunk_set"
+	var counter := 1
+	var new_id := StringName(base_id)
+	while _current_manifest.get_chunk_set(new_id) != null:
+		counter += 1
+		new_id = StringName("%s_%d" % [base_id, counter])
+	
+	# Create new chunk set
+	var new_chunk := XtremeChunkSetData.create_with_defaults(new_id, "New Area %d" % counter)
+	_current_manifest.add_chunk_set(new_chunk)
+	
+	# Update dropdown
+	_update_chunk_set_selector()
+	
+	# Select the new chunk set
+	var idx := _current_manifest.chunk_sets.find(new_chunk)
+	if _chunk_set_selector and idx >= 0:
+		_chunk_set_selector.select(idx)
+		_load_chunk_set(new_id)
+	
+	_set_status("Created new chunk set: %s" % new_chunk.display_name)
+
+func _update_chunk_set_selector() -> void:
+	if not _chunk_set_selector:
+		return
+	
+	_chunk_set_selector.clear()
+	
+	if not _current_manifest:
+		_chunk_set_selector.add_item("(No Level)")
+		return
+	
+	for chunk_set in _current_manifest.chunk_sets:
+		_chunk_set_selector.add_item(chunk_set.display_name)
+
+# ------------ Level Overview Panel ------------
+
+func _show_level_overview() -> void:
+	if not _current_manifest:
+		_set_status("No level loaded - create or load a level first")
+		return
+	
+	if _level_overview_window:
+		_level_overview_window.queue_free()
+	
+	_level_overview_window = Window.new()
+	_level_overview_window.title = "Level Overview - %s" % _current_manifest.level_name
+	_level_overview_window.size = Vector2i(800, 600)
+	_level_overview_window.transient = true
+	_level_overview_window.exclusive = false
+	
+	var main_container := VBoxContainer.new()
+	main_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	main_container.add_theme_constant_override("separation", 8)
+	_level_overview_window.add_child(main_container)
+	
+	# Toolbar
+	var toolbar := HBoxContainer.new()
+	var add_btn := Button.new()
+	add_btn.text = "Add Chunk Set"
+	add_btn.pressed.connect(_on_add_chunk_set)
+	add_btn.pressed.connect(_refresh_level_overview)
+	toolbar.add_child(add_btn)
+	
+	var refresh_btn := Button.new()
+	refresh_btn.text = "Refresh"
+	refresh_btn.pressed.connect(_refresh_level_overview)
+	toolbar.add_child(refresh_btn)
+	
+	toolbar.add_child(Control.new())  # Spacer
+	
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.pressed.connect(func(): _level_overview_window.queue_free())
+	toolbar.add_child(close_btn)
+	
+	main_container.add_child(toolbar)
+	
+	# Graph area
+	var graph_scroll := ScrollContainer.new()
+	graph_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	_level_overview_graph = Control.new()
+	_level_overview_graph.name = "LevelGraph"
+	_level_overview_graph.custom_minimum_size = Vector2(1200, 800)
+	_level_overview_graph.draw.connect(_draw_level_overview_graph)
+	graph_scroll.add_child(_level_overview_graph)
+	main_container.add_child(graph_scroll)
+	
+	# Add chunk set nodes
+	_create_level_overview_nodes()
+	
+	EditorInterface.get_base_control().add_child(_level_overview_window)
+	_level_overview_window.popup_centered()
+
+func _refresh_level_overview() -> void:
+	if _level_overview_graph:
+		for child in _level_overview_graph.get_children():
+			child.queue_free()
+		_create_level_overview_nodes()
+		_level_overview_graph.queue_redraw()
+
+func _create_level_overview_nodes() -> void:
+	if not _level_overview_graph or not _current_manifest:
+		return
+	
+	var node_size := Vector2(150, 80)
+	var start_pos := Vector2(50, 50)
+	var spacing := Vector2(200, 120)
+	
+	for i in range(_current_manifest.chunk_sets.size()):
+		var chunk_set: XtremeChunkSetData = _current_manifest.chunk_sets[i]
+		var node := _create_chunk_set_node(chunk_set, node_size)
+		
+		if chunk_set.editor_position != Vector2.ZERO:
+			node.position = chunk_set.editor_position
+		else:
+			var col := i % 4
+			var row := i / 4
+			node.position = start_pos + Vector2(col * spacing.x, row * spacing.y)
+			chunk_set.editor_position = node.position
+		
+		_level_overview_graph.add_child(node)
+
+func _create_chunk_set_node(chunk_set: XtremeChunkSetData, size: Vector2) -> Control:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = size
+	
+	var style := StyleBoxFlat.new()
+	style.bg_color = chunk_set.editor_color if chunk_set.editor_color != Color.WHITE else Color(0.2, 0.3, 0.5)
+	style.set_border_width_all(2)
+	style.border_color = Color.WHITE if _current_chunk_set == chunk_set else Color(0.5, 0.5, 0.5)
+	style.set_corner_radius_all(8)
+	style.set_content_margin_all(8)
+	panel.add_theme_stylebox_override("panel", style)
+	
+	var vbox := VBoxContainer.new()
+	var title := Label.new()
+	title.text = chunk_set.display_name
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+	
+	var id_label := Label.new()
+	id_label.text = "ID: %s" % chunk_set.chunk_set_id
+	id_label.add_theme_font_size_override("font_size", 10)
+	id_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	vbox.add_child(id_label)
+	
+	var info := Label.new()
+	info.text = "%d pipes, %d goals" % [chunk_set.outgoing_connections.size(), chunk_set.goal_portals.size()]
+	info.add_theme_font_size_override("font_size", 10)
+	vbox.add_child(info)
+	
+	panel.add_child(vbox)
+	
+	# Make clickable
+	panel.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.double_click:
+				_load_chunk_set(chunk_set.chunk_set_id)
+				_update_chunk_set_selector()
+				var idx := _current_manifest.chunk_sets.find(chunk_set)
+				if _chunk_set_selector and idx >= 0:
+					_chunk_set_selector.select(idx)
+				_set_status("Opened chunk set: %s" % chunk_set.display_name)
+	)
+	
+	return panel
+
+func _draw_level_overview_graph() -> void:
+	if not _level_overview_graph or not _current_manifest:
+		return
+	
+	for chunk_set in _current_manifest.chunk_sets:
+		var from_node := _find_chunk_node_in_graph(chunk_set.chunk_set_id)
+		if not from_node:
+			continue
+		
+		for connection in chunk_set.outgoing_connections:
+			var to_node := _find_chunk_node_in_graph(connection.destination_chunk_set)
+			if not to_node:
+				continue
+			
+			var from_pos := from_node.position + from_node.size / 2
+			var to_pos := to_node.position + to_node.size / 2
+			
+			var color := Color.ORANGE if connection.is_one_way else Color.GREEN
+			_level_overview_graph.draw_line(from_pos, to_pos, color, 2.0)
+			
+			var dir := (to_pos - from_pos).normalized()
+			var perp := Vector2(-dir.y, dir.x)
+			var arrow_pos := to_pos - dir * 20
+			_level_overview_graph.draw_polygon([to_pos, arrow_pos + perp * 8, arrow_pos - perp * 8], [color])
+
+func _find_chunk_node_in_graph(chunk_set_id: StringName) -> Control:
+	if not _level_overview_graph or not _current_manifest:
+		return null
+	
+	var idx := 0
+	for chunk_set in _current_manifest.chunk_sets:
+		if chunk_set.chunk_set_id == chunk_set_id:
+			if idx < _level_overview_graph.get_child_count():
+				return _level_overview_graph.get_child(idx) as Control
+		idx += 1
+	return null
+
+# ------------ Ghost Chunk Sets ------------
+
+func _on_ghost_toggled(enabled: bool) -> void:
+	_ghost_enabled = enabled
+	if enabled:
+		_update_ghost_chunk_sets()
+	else:
+		_clear_ghost_chunk_sets()
+
+func _update_ghost_chunk_sets() -> void:
+	_clear_ghost_chunk_sets()
+	
+	if not _ghost_enabled or not _current_manifest or not _current_chunk_set:
+		return
+	
+	var connected := _current_chunk_set.get_connected_chunk_sets()
+	
+	for chunk_set in _current_manifest.chunk_sets:
+		if chunk_set == _current_chunk_set:
+			continue
+		for conn in chunk_set.outgoing_connections:
+			if conn.destination_chunk_set == _current_chunk_set.chunk_set_id:
+				if chunk_set.chunk_set_id not in connected:
+					connected.append(chunk_set.chunk_set_id)
+	
+	for chunk_id in connected:
+		var chunk_set := _current_manifest.get_chunk_set(chunk_id)
+		if chunk_set:
+			_create_ghost_visualizer(chunk_set)
+
+func _create_ghost_visualizer(chunk_set: XtremeChunkSetData) -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+	
+	var ghost := MeshInstance3D.new()
+	ghost.name = "Ghost_%s" % chunk_set.chunk_set_id
+	
+	var box := BoxMesh.new()
+	var cell_size := _grid_settings.get_cell_size() if _grid_settings else Vector3(2, 2, 2)
+	box.size = Vector3(chunk_set.size) * cell_size
+	ghost.mesh = box
+	
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(chunk_set.editor_color.r, chunk_set.editor_color.g, chunk_set.editor_color.b, 0.2)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ghost.material_override = mat
+	
+	ghost.position = box.size / 2 + Vector3(box.size.x * 1.2, 0, 0)
+	
+	scene_root.add_child(ghost)
+	_ghost_visualizers.append(ghost)
+
+func _clear_ghost_chunk_sets() -> void:
+	for ghost in _ghost_visualizers:
+		if is_instance_valid(ghost):
+			ghost.queue_free()
+	_ghost_visualizers.clear()
+
+# ------------ Water Zone Tool ------------
+
+func _start_water_zone(pos: Vector3i) -> void:
+	_water_zone_start = pos
+	_water_zone_dragging = true
+	_update_water_zone_preview(pos)
+	_set_status("Water Zone: Drag to set size...")
+
+func _update_water_zone_preview(current_pos: Vector3i) -> void:
+	if not _water_zone_dragging:
+		return
+	
+	if not _water_zone_preview:
+		_create_water_zone_preview()
+	
+	var min_pos := Vector3i(
+		mini(_water_zone_start.x, current_pos.x),
+		mini(_water_zone_start.y, current_pos.y),
+		mini(_water_zone_start.z, current_pos.z)
+	)
+	var max_pos := Vector3i(
+		maxi(_water_zone_start.x, current_pos.x),
+		maxi(_water_zone_start.y, current_pos.y),
+		maxi(_water_zone_start.z, current_pos.z)
+	)
+	
+	var cell_size := _grid_settings.get_cell_size()
+	var world_min := Vector3(min_pos) * cell_size
+	var world_size := Vector3(max_pos - min_pos + Vector3i.ONE) * cell_size
+	
+	var box := BoxMesh.new()
+	box.size = world_size
+	_water_zone_preview.mesh = box
+	_water_zone_preview.position = world_min + world_size / 2
+	_water_zone_preview.visible = true
+
+func _create_water_zone_preview() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+	
+	_water_zone_preview = MeshInstance3D.new()
+	_water_zone_preview.name = "XtremeWaterZonePreview_TEMP"
+	
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.4, 0.9, 0.35)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_water_zone_preview.material_override = mat
+	_water_zone_preview.visible = false
+	
+	scene_root.add_child(_water_zone_preview)
+
+func _finish_water_zone(end_pos: Vector3i) -> void:
+	_water_zone_dragging = false
+	
+	if _water_zone_preview:
+		_water_zone_preview.visible = false
+	
+	if not _current_chunk_set:
+		_set_status("No chunk set loaded - create a level first")
+		return
+	
+	var min_pos := Vector3i(
+		mini(_water_zone_start.x, end_pos.x),
+		mini(_water_zone_start.y, end_pos.y),
+		mini(_water_zone_start.z, end_pos.z)
+	)
+	var max_pos := Vector3i(
+		maxi(_water_zone_start.x, end_pos.x),
+		maxi(_water_zone_start.y, end_pos.y),
+		maxi(_water_zone_start.z, end_pos.z)
+	)
+	
+	var water_zone := XtremeWaterZone.create_zone(min_pos, max_pos)
+	_current_chunk_set.add_water_zone(water_zone)
+	
+	for x in range(min_pos.x, max_pos.x + 1):
+		for y in range(min_pos.y, max_pos.y + 1):
+			for z in range(min_pos.z, max_pos.z + 1):
+				var pos := Vector3i(x, y, z)
+				if _current_level and not _current_level.has_tile(pos):
+					_current_level.set_tile(pos, &"water", Vector3i.ZERO)
+					if _grid_visualizer:
+						_grid_visualizer.update_tile(pos)
+	
+	var size := max_pos - min_pos + Vector3i.ONE
+	_set_status("Created water zone: %dx%dx%d" % [size.x, size.y, size.z])
+
+# ------------ Pipe/Portal Auto-Config ------------
+
+func _auto_configure_transport_tile(pos: Vector3i, tile_id: StringName) -> void:
+	# When a transport tile is placed, check if we should auto-create a connection
+	if not _current_chunk_set or not _current_manifest:
+		return
+	
+	# Get tile definition to check transport type
+	var tile_def := _current_palette.get_tile(tile_id) if _current_palette else null
+	if not tile_def:
+		return
+	
+	var transport_type: String = tile_def.custom_properties.get("transport_type", "")
+	if transport_type.is_empty():
+		return
+	
+	# Create a new pipe connection for this tile
+	var connection := XtremePipeConnection.new()
+	connection.connection_id = StringName("conn_%d_%d_%d" % [pos.x, pos.y, pos.z])
+	connection.grid_position = pos
+	connection.world_position = Vector3(pos) * _grid_settings.get_cell_size()
+	connection.display_name = tile_def.display_name
+	
+	# Set pipe type from tile
+	match transport_type:
+		"pipe": connection.pipe_type = XtremePipeConnection.PipeType.PIPE
+		"door": connection.pipe_type = XtremePipeConnection.PipeType.DOOR
+		"hole": connection.pipe_type = XtremePipeConnection.PipeType.HOLE
+		"warp": connection.pipe_type = XtremePipeConnection.PipeType.WARP_ZONE
+		_: connection.pipe_type = XtremePipeConnection.PipeType.CUSTOM
+	
+	connection.requires_input = tile_def.custom_properties.get("requires_input", true)
+	connection.input_direction = tile_def.custom_properties.get("input_direction", 0)
+	
+	# Add to chunk set (destination will need to be configured manually)
+	_current_chunk_set.add_connection(connection)
+	_set_status("Transport tile placed - configure destination in Level Overview")
+
+func _auto_configure_goal_tile(pos: Vector3i, tile_id: StringName) -> void:
+	if not _current_chunk_set:
+		return
+	
+	var tile_def := _current_palette.get_tile(tile_id) if _current_palette else null
+	if not tile_def:
+		return
+	
+	var goal_type_str: String = tile_def.custom_properties.get("goal_type", "standard")
+	var is_secret: bool = tile_def.custom_properties.get("is_secret_exit", false)
+	
+	var goal: XtremeGoalPortal
+	if is_secret or goal_type_str == "secret":
+		goal = XtremeGoalPortal.create_secret(pos)
+	else:
+		goal = XtremeGoalPortal.create_standard(pos)
+	
+	goal.returns_to = tile_def.custom_properties.get("returns_to", "world_map")
+	
+	_current_chunk_set.add_goal_portal(goal)
+	_set_status("Goal portal added to chunk set")
+
+func _auto_configure_spawn_tile(pos: Vector3i, tile_id: StringName) -> void:
+	if not _current_chunk_set:
+		return
+	
+	var tile_def := _current_palette.get_tile(tile_id) if _current_palette else null
+	if not tile_def:
+		return
+	
+	var cell_size := _grid_settings.get_cell_size()
+	
+	var spawn := XtremeSpawnPoint.new()
+	spawn.spawn_id = StringName("spawn_%d_%d_%d" % [pos.x, pos.y, pos.z])
+	spawn.grid_position = pos
+	# Calculate world position: center of cell horizontally, top of cell vertically
+	spawn.position = Vector3(
+		pos.x * cell_size.x + cell_size.x / 2.0,
+		pos.y * cell_size.y + cell_size.y,  # Top of cell (player stands on it)
+		pos.z * cell_size.z + cell_size.z / 2.0
+	)
+	spawn.is_default = tile_def.custom_properties.get("is_default", false)
+	spawn.display_name = "Spawn Point"
+	
+	# If this is marked as default, or it's the first spawn point, make it default
+	if spawn.is_default or _current_chunk_set.spawn_points.is_empty():
+		# Clear default from other spawn points
+		for existing_spawn in _current_chunk_set.spawn_points:
+			existing_spawn.is_default = false
+		spawn.is_default = true
+	
+	_current_chunk_set.add_spawn_point(spawn)
+	_set_status("Spawn point added at world position: %s" % spawn.position)
+
+# ============ PHASE 4: Path Systems ============
+
+func _set_path_edit_mode(mode: int) -> void:
+	_path_edit_mode = mode
+	var mode_names := ["Grind Rail", "Roller Coaster", "Light Dash"]
+	_set_status("Path Type: %s" % mode_names[mode])
+	_update_path_properties_visibility()
+	_clear_current_path()
+
+func _set_path_tool(tool: int) -> void:
+	_path_tool_mode = tool
+	var tool_names := ["Place", "Select", "Edit", "Delete"]
+	_set_status("Path Tool: %s" % tool_names[tool])
+
+func _update_path_properties_visibility() -> void:
+	if not _main_dock:
+		return
+	
+	var rail_props := _main_dock.find_child("RailProperties", true, false)
+	var coaster_props := _main_dock.find_child("CoasterProperties", true, false)
+	var dash_props := _main_dock.find_child("DashProperties", true, false)
+	
+	if rail_props: rail_props.visible = (_path_edit_mode == 0)
+	if coaster_props: coaster_props.visible = (_path_edit_mode == 1)
+	if dash_props: dash_props.visible = (_path_edit_mode == 2)
+
+func _clear_current_path() -> void:
+	_current_rail = null
+	_current_coaster = null
+	_current_dash_trail = null
+	_path_drawing = false
+	_update_path_preview()
+
+func _on_new_path() -> void:
+	_clear_current_path()
+	_path_drawing = true
+	
+	match _path_edit_mode:
+		0:  # Rail
+			_current_rail = XtremeGrindRail.new()
+			_current_rail.rail_id = StringName("rail_%d" % randi())
+			_current_rail.display_name = "Grind Rail %d" % (_rails.size() + 1)
+			_apply_rail_properties()
+			_set_status("New Grind Rail - Click to place points, then Finish Path")
+		1:  # Coaster
+			_current_coaster = XtremeRollerCoaster.new()
+			_current_coaster.coaster_id = StringName("coaster_%d" % randi())
+			_current_coaster.display_name = "Roller Coaster %d" % (_coasters.size() + 1)
+			_apply_coaster_properties()
+			_set_status("New Roller Coaster - Click to place points, then Finish Path")
+		2:  # Light Dash
+			_current_dash_trail = XtremeLightDashTrail.new()
+			_current_dash_trail.trail_id = StringName("dash_%d" % randi())
+			_current_dash_trail.display_name = "Light Dash %d" % (_dash_trails.size() + 1)
+			_apply_dash_properties()
+			_set_status("New Light Dash Trail - Click to place rings, then Finish Path")
+
+func _apply_rail_properties() -> void:
+	if not _current_rail or not _main_dock:
+		return
+	
+	var speed_spin := _main_dock.find_child("RailSpeedSpin", true, false) as SpinBox
+	var allow_jump := _main_dock.find_child("RailAllowJump", true, false) as CheckBox
+	var allow_crouch := _main_dock.find_child("RailAllowCrouch", true, false) as CheckBox
+	
+	if speed_spin: _current_rail.speed_multiplier = speed_spin.value
+	if allow_jump: _current_rail.allow_jump_off = allow_jump.button_pressed
+	if allow_crouch: _current_rail.allow_crouch_boost = allow_crouch.button_pressed
+
+func _apply_coaster_properties() -> void:
+	if not _current_coaster or not _main_dock:
+		return
+	
+	var speed_spin := _main_dock.find_child("CoasterSpeedSpin", true, false) as SpinBox
+	var locked := _main_dock.find_child("CoasterLocked", true, false) as CheckBox
+	
+	if speed_spin: _current_coaster.base_speed = speed_spin.value
+	if locked: _current_coaster.locked_ride = locked.button_pressed
+
+func _apply_dash_properties() -> void:
+	if not _current_dash_trail or not _main_dock:
+		return
+	
+	var speed_spin := _main_dock.find_child("DashSpeedSpin", true, false) as SpinBox
+	var dedicated := _main_dock.find_child("DashDedicated", true, false) as CheckBox
+	var works_regular := _main_dock.find_child("DashWorksRegular", true, false) as CheckBox
+	
+	if speed_spin: _current_dash_trail.dash_speed = speed_spin.value
+	if works_regular: _current_dash_trail.works_with_regular_rings = works_regular.button_pressed
+
+func _on_finish_path() -> void:
+	if not _path_drawing:
+		_set_status("No path being drawn")
+		return
+	
+	match _path_edit_mode:
+		0:  # Rail
+			if _current_rail and _current_rail.control_points.size() >= 2:
+				_current_rail.calculate_occupied_cells(_grid_settings.get_cell_size())
+				_rails.append(_current_rail)
+				_set_status("Grind Rail saved with %d points" % _current_rail.control_points.size())
+			else:
+				_set_status("Rail needs at least 2 points")
+		1:  # Coaster
+			if _current_coaster and _current_coaster.control_points.size() >= 2:
+				_current_coaster.calculate_duration()
+				_coasters.append(_current_coaster)
+				_set_status("Roller Coaster saved with %d points (%.1fs ride)" % [_current_coaster.control_points.size(), _current_coaster.ride_duration])
+			else:
+				_set_status("Coaster needs at least 2 points")
+		2:  # Light Dash
+			if _current_dash_trail and _current_dash_trail.ring_positions.size() >= 2:
+				_dash_trails.append(_current_dash_trail)
+				_set_status("Light Dash saved with %d rings" % _current_dash_trail.ring_positions.size())
+			else:
+				_set_status("Dash trail needs at least 2 rings")
+	
+	_update_path_list()
+	_clear_current_path()
+
+func _on_close_path_loop() -> void:
+	match _path_edit_mode:
+		0:
+			if _current_rail:
+				_current_rail.is_loop = true
+				_set_status("Rail loop enabled")
+		1:
+			if _current_coaster:
+				_current_coaster.is_loop = true
+				_set_status("Coaster loop enabled")
+		2:
+			if _current_dash_trail:
+				_current_dash_trail.is_loop = true
+				_set_status("Dash trail loop enabled")
+
+func _on_auto_fill_path() -> void:
+	if _path_edit_mode == 2 and _current_dash_trail:
+		_current_dash_trail.auto_fill_gaps()
+		_set_status("Auto-filled gaps: now %d rings" % _current_dash_trail.ring_positions.size())
+		_update_path_preview()
+
+func _on_path_list_selected(index: int) -> void:
+	_selected_path_index = index
+	
+	# Calculate which array and index
+	var rail_count := _rails.size()
+	var coaster_count := _coasters.size()
+	
+	if index < rail_count:
+		_set_status("Selected: %s" % _rails[index].display_name)
+	elif index < rail_count + coaster_count:
+		var coaster_idx := index - rail_count
+		_set_status("Selected: %s" % _coasters[coaster_idx].display_name)
+	else:
+		var dash_idx := index - rail_count - coaster_count
+		if dash_idx < _dash_trails.size():
+			_set_status("Selected: %s" % _dash_trails[dash_idx].display_name)
+
+func _update_path_list() -> void:
+	var path_list := _main_dock.find_child("PathList", true, false) as ItemList
+	if not path_list:
+		return
+	
+	path_list.clear()
+	
+	for rail in _rails:
+		path_list.add_item("[Rail] %s" % rail.display_name)
+	
+	for coaster in _coasters:
+		path_list.add_item("[Coaster] %s" % coaster.display_name)
+	
+	for trail in _dash_trails:
+		path_list.add_item("[Dash] %s" % trail.display_name)
+
+func _update_path_preview() -> void:
+	# Clear existing preview
+	if _path_preview_mesh and is_instance_valid(_path_preview_mesh):
+		_path_preview_mesh.queue_free()
+		_path_preview_mesh = null
+	
+	if not _path_drawing:
+		return
+	
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+	
+	_path_preview_mesh = MeshInstance3D.new()
+	_path_preview_mesh.name = "XtremePathPreview_TEMP"
+	
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	
+	match _path_edit_mode:
+		0:  # Rail
+			if _current_rail and _current_rail.control_points.size() >= 2:
+				var cell_size := _grid_settings.get_cell_size()
+				for i in range(20):
+					var t1 := float(i) / 20.0
+					var t2 := float(i + 1) / 20.0
+					var p1 := _current_rail.get_point_at(t1) * cell_size
+					var p2 := _current_rail.get_point_at(t2) * cell_size
+					im.surface_set_color(Color.YELLOW)
+					im.surface_add_vertex(p1)
+					im.surface_add_vertex(p2)
+		1:  # Coaster
+			if _current_coaster and _current_coaster.control_points.size() >= 2:
+				for i in range(50):
+					var t1 := float(i) / 50.0
+					var t2 := float(i + 1) / 50.0
+					var p1 := _current_coaster.get_point_at(t1)
+					var p2 := _current_coaster.get_point_at(t2)
+					im.surface_set_color(Color.RED)
+					im.surface_add_vertex(p1)
+					im.surface_add_vertex(p2)
+		2:  # Light Dash
+			if _current_dash_trail and _current_dash_trail.ring_positions.size() >= 2:
+				var cell_size := _grid_settings.get_cell_size()
+				for i in range(_current_dash_trail.ring_positions.size() - 1):
+					var p1 := _current_dash_trail.get_ring_world_position(i, cell_size)
+					var p2 := _current_dash_trail.get_ring_world_position(i + 1, cell_size)
+					im.surface_set_color(Color.CYAN)
+					im.surface_add_vertex(p1)
+					im.surface_add_vertex(p2)
+	
+	im.surface_end()
+	_path_preview_mesh.mesh = im
+	
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	_path_preview_mesh.material_override = mat
+	
+	scene_root.add_child(_path_preview_mesh)
+
+func _add_path_point(world_pos: Vector3, grid_pos: Vector3i) -> void:
+	if not _path_drawing:
+		return
+	
+	match _path_edit_mode:
+		0:  # Rail - uses grid coordinates converted to path coordinates
+			if _current_rail:
+				var path_pos := Vector3(grid_pos)
+				_current_rail.add_control_point(path_pos)
+				_set_status("Rail point %d added" % _current_rail.control_points.size())
+		1:  # Coaster - uses world coordinates
+			if _current_coaster:
+				_current_coaster.add_control_point(world_pos)
+				_set_status("Coaster point %d added" % _current_coaster.control_points.size())
+		2:  # Light Dash - uses grid coordinates
+			if _current_dash_trail:
+				var dedicated := true
+				var dedicated_check := _main_dock.find_child("DashDedicated", true, false) as CheckBox
+				if dedicated_check:
+					dedicated = dedicated_check.button_pressed
+				_current_dash_trail.add_ring(grid_pos, dedicated)
+				_set_status("Ring %d added" % _current_dash_trail.ring_positions.size())
+	
+	_update_path_preview()

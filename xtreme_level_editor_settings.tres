@@ -1,6 +1,6 @@
-[gd_resource type="Resource" script_class="XtremeGridSettings" load_steps=2 format=3 uid="uid://dar2stxt3gfwi"]
+[gd_resource type="Resource" script_class="XtremeGridSettings" load_steps=2 format=3 uid="uid://bdbfrvedoagmm"]
 
-[ext_resource type="Script" uid="uid://ckfr4jpgs5maf" path="res://addons/xtreme_level_editor/resources/grid_settings.gd" id="1_i4o65"]
+[ext_resource type="Script" uid="uid://ciwuyafato2lp" path="res://addons/xtreme_level_editor/resources/grid_settings.gd" id="1_i4o65"]
 
 [resource]
 script = ExtResource("1_i4o65")

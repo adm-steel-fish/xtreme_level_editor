@@ -58,6 +58,9 @@ enum TileType {
 	RAIL,           ## Grindable rail segment
 	SPRING,         ## Bounce pad/spring
 	BOOST,          ## Speed boost pad
+	WATER,          ## Water volume (swimming)
+	TRANSPORT,      ## Pipe/door/warp zone (chunk set transition)
+	SPAWN,          ## Player spawn point marker
 }
 
 @export var tile_type: TileType = TileType.SOLID

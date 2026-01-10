@@ -1,12 +1,12 @@
 [gd_resource type="Resource" script_class="XtremeLevelData" load_steps=2 format=3 uid="uid://tqx6a7x52r8t"]
 
-[ext_resource type="Script" uid="uid://niq6xvynxma1" path="res://addons/xtreme_level_editor/resources/level_data.gd" id="1_o4qau"]
+[ext_resource type="Script" uid="uid://d0fy0serrgm8t" path="res://addons/xtreme_level_editor/resources/level_data.gd" id="1_o4qau"]
 
 [resource]
 script = ExtResource("1_o4qau")
 level_name = "New Level"
 creation_date = "2026-01-05T14:50:41"
-last_modified = "2026-01-05T15:02:30"
+last_modified = "2026-01-10T05:41:48"
 _grid_data = {
 "10,0,10": &"platform",
 "10,0,11": &"platform",
@@ -77,6 +77,8 @@ _grid_data = {
 "10,1,48": &"platform",
 "10,1,49": &"platform",
 "10,1,5": &"platform",
+"10,2,14": &"goal_secret",
+"10,2,15": &"goal_secret",
 "10,2,22": &"platform",
 "10,2,23": &"platform",
 "10,2,24": &"platform",
@@ -460,6 +462,8 @@ _grid_data = {
 "14,1,48": &"platform",
 "14,1,49": &"platform",
 "14,1,5": &"platform",
+"14,2,3": &"goal_portal",
+"14,2,4": &"goal_portal",
 "14,4,22": &"platform",
 "14,4,23": &"platform",
 "14,4,24": &"platform",
@@ -521,6 +525,8 @@ _grid_data = {
 "15,1,48": &"platform",
 "15,1,49": &"platform",
 "15,1,5": &"platform",
+"15,2,3": &"goal_portal",
+"15,2,4": &"goal_portal",
 "15,4,22": &"platform",
 "15,4,23": &"platform",
 "15,4,24": &"platform",
@@ -1147,6 +1153,8 @@ _grid_data = {
 "24,2,29": &"platform",
 "24,2,30": &"platform",
 "24,2,31": &"platform",
+"24,2,6": &"spawn_point",
+"24,2,7": &"spawn_point",
 "24,3,13": &"platform",
 "24,3,14": &"platform",
 "24,3,15": &"platform",
@@ -1235,6 +1243,8 @@ _grid_data = {
 "25,2,29": &"platform",
 "25,2,30": &"platform",
 "25,2,31": &"platform",
+"25,2,6": &"spawn_point",
+"25,2,7": &"spawn_point",
 "25,3,13": &"platform",
 "25,3,22": &"platform",
 "25,3,23": &"platform",
@@ -3415,6 +3425,8 @@ _grid_data = {
 "9,1,32": &"platform",
 "9,1,48": &"platform",
 "9,1,49": &"platform",
+"9,2,14": &"goal_secret",
+"9,2,15": &"goal_secret",
 "9,2,22": &"platform",
 "9,2,23": &"platform",
 "9,2,24": &"platform",
@@ -3445,3 +3457,5 @@ _grid_data = {
 "9,4,27": &"platform",
 "9,4,28": &"platform"
 }
+_rotation_data = {}
+_multicell_data = {}

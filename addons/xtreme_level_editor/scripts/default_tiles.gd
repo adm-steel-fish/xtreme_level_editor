@@ -191,6 +191,146 @@ static func create_default_palette() -> XtremeTilePalette:
 	deco_plant.generation_weight = 2.0
 	palette.tiles.append(deco_plant)
 	
+	# ============ Water ============
+	
+	var water := XtremeTileDefinition.new()
+	water.tile_id = &"water"
+	water.display_name = "Water"
+	water.category = "Water"
+	water.editor_color = Color(0.2, 0.4, 0.9, 0.6)
+	water.tile_type = XtremeTileDefinition.TileType.WATER
+	water.is_solid = false
+	water.is_standable = false
+	water.generation_weight = 0.0
+	palette.tiles.append(water)
+	
+	var water_surface := XtremeTileDefinition.new()
+	water_surface.tile_id = &"water_surface"
+	water_surface.display_name = "Water Surface"
+	water_surface.category = "Water"
+	water_surface.editor_color = Color(0.3, 0.5, 1.0, 0.7)
+	water_surface.tile_type = XtremeTileDefinition.TileType.WATER
+	water_surface.is_solid = false
+	water_surface.is_standable = false
+	water_surface.custom_properties["is_surface"] = true
+	water_surface.generation_weight = 0.0
+	palette.tiles.append(water_surface)
+	
+	var water_hazard := XtremeTileDefinition.new()
+	water_hazard.tile_id = &"water_hazard"
+	water_hazard.display_name = "Hazard Water"
+	water_hazard.category = "Water"
+	water_hazard.editor_color = Color(0.5, 0.8, 0.2, 0.6)
+	water_hazard.tile_type = XtremeTileDefinition.TileType.WATER
+	water_hazard.is_solid = false
+	water_hazard.is_standable = false
+	water_hazard.is_hazardous = true
+	water_hazard.damage_amount = 5
+	water_hazard.custom_properties["water_type"] = "hazardous"
+	water_hazard.generation_weight = 0.0
+	palette.tiles.append(water_hazard)
+	
+	# ============ Transport (Pipes/Portals) ============
+	
+	var pipe := XtremeTileDefinition.new()
+	pipe.tile_id = &"pipe"
+	pipe.display_name = "Pipe"
+	pipe.category = "Transport"
+	pipe.editor_color = Color(0.0, 0.8, 0.4)
+	pipe.tile_type = XtremeTileDefinition.TileType.TRANSPORT
+	pipe.is_solid = true
+	pipe.is_standable = true
+	pipe.custom_properties["transport_type"] = "pipe"
+	pipe.custom_properties["requires_input"] = true
+	pipe.custom_properties["input_direction"] = 2  # Down
+	pipe.generation_weight = 0.0
+	palette.tiles.append(pipe)
+	
+	var door := XtremeTileDefinition.new()
+	door.tile_id = &"door"
+	door.display_name = "Door"
+	door.category = "Transport"
+	door.editor_color = Color(0.6, 0.4, 0.2)
+	door.tile_type = XtremeTileDefinition.TileType.TRANSPORT
+	door.is_solid = false
+	door.is_standable = false
+	door.cell_size = Vector3i(1, 2, 1)  # Doors are usually 2 cells tall
+	door.custom_properties["transport_type"] = "door"
+	door.custom_properties["requires_input"] = true
+	door.custom_properties["input_direction"] = 1  # Up
+	door.generation_weight = 0.0
+	palette.tiles.append(door)
+	
+	var warp_zone := XtremeTileDefinition.new()
+	warp_zone.tile_id = &"warp_zone"
+	warp_zone.display_name = "Warp Zone"
+	warp_zone.category = "Transport"
+	warp_zone.editor_color = Color(0.8, 0.2, 1.0)
+	warp_zone.tile_type = XtremeTileDefinition.TileType.TRANSPORT
+	warp_zone.is_solid = false
+	warp_zone.is_standable = false
+	warp_zone.custom_properties["transport_type"] = "warp"
+	warp_zone.custom_properties["requires_input"] = false  # Auto-teleport on contact
+	warp_zone.generation_weight = 0.0
+	palette.tiles.append(warp_zone)
+	
+	var hole := XtremeTileDefinition.new()
+	hole.tile_id = &"hole"
+	hole.display_name = "Hole"
+	hole.category = "Transport"
+	hole.editor_color = Color(0.1, 0.1, 0.1)
+	hole.tile_type = XtremeTileDefinition.TileType.TRANSPORT
+	hole.is_solid = false
+	hole.is_standable = false
+	hole.custom_properties["transport_type"] = "hole"
+	hole.custom_properties["requires_input"] = false  # Fall through
+	hole.generation_weight = 0.0
+	palette.tiles.append(hole)
+	
+	# ============ Goals ============
+	
+	var goal_standard := XtremeTileDefinition.new()
+	goal_standard.tile_id = &"goal_portal"
+	goal_standard.display_name = "Goal Portal"
+	goal_standard.category = "Goals"
+	goal_standard.editor_color = Color(1.0, 0.85, 0.0)
+	goal_standard.tile_type = XtremeTileDefinition.TileType.GOAL
+	goal_standard.is_solid = false
+	goal_standard.is_standable = false
+	goal_standard.custom_properties["goal_type"] = "standard"
+	goal_standard.custom_properties["returns_to"] = "world_map"
+	goal_standard.generation_weight = 0.0
+	palette.tiles.append(goal_standard)
+	
+	var goal_secret := XtremeTileDefinition.new()
+	goal_secret.tile_id = &"goal_secret"
+	goal_secret.display_name = "Secret Exit"
+	goal_secret.category = "Goals"
+	goal_secret.editor_color = Color(0.7, 0.2, 1.0)
+	goal_secret.tile_type = XtremeTileDefinition.TileType.GOAL
+	goal_secret.is_solid = false
+	goal_secret.is_standable = false
+	goal_secret.custom_properties["goal_type"] = "secret"
+	goal_secret.custom_properties["returns_to"] = "world_map"
+	goal_secret.custom_properties["is_secret_exit"] = true
+	goal_secret.generation_weight = 0.0
+	palette.tiles.append(goal_secret)
+	
+	# ============ Spawn Points ============
+	
+	var spawn_point := XtremeTileDefinition.new()
+	spawn_point.tile_id = &"spawn_point"
+	spawn_point.display_name = "Spawn Point"
+	spawn_point.category = "Progress"
+	spawn_point.editor_color = Color(0.2, 1.0, 0.2)
+	spawn_point.tile_type = XtremeTileDefinition.TileType.SPAWN
+	spawn_point.is_solid = false
+	spawn_point.is_standable = false
+	spawn_point.custom_properties["spawn_type"] = "player"
+	spawn_point.custom_properties["is_default"] = false
+	spawn_point.generation_weight = 0.0
+	palette.tiles.append(spawn_point)
+	
 	return palette
 
 static func save_default_palette(path: String = "res://default_tile_palette.tres") -> Error:
