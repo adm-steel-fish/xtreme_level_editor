@@ -6,6 +6,17 @@ class_name PlayerController
 ## 
 ## Two-button control scheme: Jump (Space) and Action (CTRL)
 ## All speeds and timings are exposed for editor tuning
+##
+## v1.1 FIXES:
+## - Fixed _apply_ground_movement() camera-relative movement calculation
+## - Fixed _get_slope_direction() returning wrong direction
+## - Fixed homing reticle positioning
+## - Fixed _check_wall_hug() - now requires falling to wall hug
+## - Fixed spin dash starting without direction
+## - Fixed potential null references in targeting
+## - Fixed PathFollow3D cleanup
+## - Added HOMING_ATTACK to _is_airborne_state()
+## - Performance: Cached camera vectors
 
 #region Enums
 enum State {
@@ -305,6 +316,13 @@ var action_just_released: bool = false
 # Slope
 var floor_normal: Vector3 = Vector3.UP
 var floor_angle: float = 0.0
+
+# PERFORMANCE: Cached camera vectors (updated once per frame)
+var _cached_camera_forward: Vector3 = Vector3.FORWARD
+var _cached_camera_right: Vector3 = Vector3.RIGHT
+
+# Wall hug minimum fall speed
+var wall_hug_min_fall_speed: float = 1.0
 #endregion
 
 #region Signals
@@ -350,6 +368,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_update_cached_camera_vectors()
 	_gather_input()
 	_update_grounded_status()
 	_update_timers(delta)
@@ -408,6 +427,24 @@ func _physics_process(delta: float) -> void:
 
 
 #region Input Handling
+## PERFORMANCE: Cache camera vectors once per frame instead of recalculating
+func _update_cached_camera_vectors() -> void:
+	if camera:
+		_cached_camera_forward = -camera.global_transform.basis.z
+		_cached_camera_forward.y = 0
+		if _cached_camera_forward.length_squared() > 0.001:
+			_cached_camera_forward = _cached_camera_forward.normalized()
+		else:
+			_cached_camera_forward = Vector3.FORWARD
+		
+		_cached_camera_right = camera.global_transform.basis.x
+		_cached_camera_right.y = 0
+		if _cached_camera_right.length_squared() > 0.001:
+			_cached_camera_right = _cached_camera_right.normalized()
+		else:
+			_cached_camera_right = Vector3.RIGHT
+
+
 func _gather_input() -> void:
 	# Get raw input
 	input_direction = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
@@ -430,20 +467,11 @@ func _gather_input() -> void:
 func _get_world_input_direction(input: Vector2) -> Vector3:
 	if not camera:
 		# Fallback if no camera assigned
-		return Vector3(input.x, 0, input.y).normalized()
+		return Vector3(input.x, 0, input.y).normalized() if input.length() > 0.1 else Vector3.ZERO
 	
-	# Get camera's forward and right vectors (flattened to horizontal plane)
-	var cam_forward = -camera.global_transform.basis.z
-	cam_forward.y = 0
-	cam_forward = cam_forward.normalized()
-	
-	var cam_right = camera.global_transform.basis.x
-	cam_right.y = 0
-	cam_right = cam_right.normalized()
-	
-	# Combine based on input
-	var direction = (cam_right * input.x + cam_forward * -input.y).normalized()
-	return direction if direction.length() > 0.1 else Vector3.ZERO
+	# Use cached camera vectors for performance
+	var direction = (_cached_camera_right * input.x + _cached_camera_forward * -input.y)
+	return direction.normalized() if direction.length() > 0.1 else Vector3.ZERO
 #endregion
 
 
@@ -454,7 +482,7 @@ func _update_grounded_status() -> void:
 	
 	if is_grounded:
 		floor_normal = get_floor_normal()
-		floor_angle = rad_to_deg(acos(floor_normal.dot(Vector3.UP)))
+		floor_angle = rad_to_deg(acos(clampf(floor_normal.dot(Vector3.UP), -1.0, 1.0)))
 		coyote_timer = coyote_time
 		
 		# Reset air jump when landing
@@ -1318,8 +1346,14 @@ func _apply_gravity(delta: float) -> void:
 
 func _get_slope_direction() -> Vector3:
 	# Get the downhill direction on the current slope
-	var slope_direction = Vector3(floor_normal.x, 0, floor_normal.z).normalized()
-	return slope_direction
+	# The slope direction should be the direction gravity would pull you down
+	if floor_normal.is_equal_approx(Vector3.UP):
+		return Vector3.ZERO
+	
+	# Project gravity onto the slope plane to get downhill direction
+	var gravity_dir = Vector3.DOWN
+	var projected = gravity_dir - floor_normal * gravity_dir.dot(floor_normal)
+	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
 #endregion
 
 
@@ -1427,7 +1461,10 @@ func _update_homing_reticle() -> void:
 	if not _is_airborne_state() or _is_swimming_state():
 		homing_target = null
 		if homing_reticle:
-			homing_reticle.visible = false
+			if homing_reticle.has_method("hide_reticle"):
+				homing_reticle.hide_reticle()
+			else:
+				homing_reticle.visible = false
 		return
 	
 	# Find best target
@@ -1436,26 +1473,40 @@ func _update_homing_reticle() -> void:
 	# Update reticle
 	if homing_reticle:
 		if homing_target and is_instance_valid(homing_target):
-			homing_reticle.visible = true
+			# FIX: Use show_reticle method if available for proper animation
+			if homing_reticle.has_method("show_reticle") and not homing_reticle.visible:
+				homing_reticle.show_reticle()
+			else:
+				homing_reticle.visible = true
+			
 			# Position reticle over target (screen space)
 			if camera:
 				var screen_pos = camera.unproject_position(homing_target.global_position)
-				homing_reticle.position = screen_pos - homing_reticle.size / 2
+				# FIX: Center the reticle on the target position
+				homing_reticle.global_position = screen_pos - homing_reticle.size / 2.0
 		else:
-			homing_reticle.visible = false
+			if homing_reticle.has_method("hide_reticle"):
+				homing_reticle.hide_reticle()
+			else:
+				homing_reticle.visible = false
 
 
 func _find_best_homing_target() -> Node3D:
 	if not camera:
 		return null
 	
+	# PERFORMANCE: Early out if camera forward is invalid
+	if _cached_camera_forward.length_squared() < 0.001:
+		return null
+	
 	var targets = get_tree().get_nodes_in_group("targetable") + get_tree().get_nodes_in_group("enemies") + get_tree().get_nodes_in_group("rails")
+	
+	# PERFORMANCE: Early out if no targets
+	if targets.is_empty():
+		return null
+	
 	var best_target: Node3D = null
 	var best_score: float = -1.0
-	
-	var camera_forward = -camera.global_transform.basis.z
-	camera_forward.y = 0
-	camera_forward = camera_forward.normalized()
 	
 	for target in targets:
 		if not is_instance_valid(target) or not target is Node3D:
@@ -1465,12 +1516,17 @@ func _find_best_homing_target() -> Node3D:
 		var distance = to_target.length()
 		
 		# Range check
-		if distance > homing_range:
+		if distance > homing_range or distance < 0.5:  # Also ignore very close targets
 			continue
 		
 		# Cone check (based on camera forward)
-		var to_target_flat = Vector3(to_target.x, 0, to_target.z).normalized()
-		var angle = rad_to_deg(acos(camera_forward.dot(to_target_flat)))
+		var to_target_flat = Vector3(to_target.x, 0, to_target.z)
+		if to_target_flat.length_squared() < 0.001:
+			continue
+		to_target_flat = to_target_flat.normalized()
+		
+		var dot = _cached_camera_forward.dot(to_target_flat)
+		var angle = rad_to_deg(acos(clampf(dot, -1.0, 1.0)))
 		
 		if angle > homing_cone_angle:
 			continue
@@ -1495,11 +1551,13 @@ func _is_valid_homing_target(target: Node3D) -> bool:
 	return distance <= homing_range
 
 
+## FIX: Added HOMING_ATTACK to airborne states
 func _is_airborne_state() -> bool:
 	return current_state in [
 		State.AIRBORNE,
 		State.AIR_ROLLING,
 		State.SIDE_JUMP,
+		State.HOMING_ATTACK,
 		State.BUTT_BOUNCE_DESCENDING,
 		State.BUTT_BOUNCE_REBOUNDING,
 		State.WALL_JUMP
@@ -1508,7 +1566,12 @@ func _is_airborne_state() -> bool:
 
 
 #region Wall Detection
+## FIX: Only allow wall hug when falling, not when rising
 func _check_wall_hug() -> bool:
+	# Must be falling to wall hug
+	if velocity.y > -wall_hug_min_fall_speed:
+		return false
+	
 	if not world_input_direction.length() > 0.1:
 		return false
 	
@@ -1527,7 +1590,7 @@ func _check_wall_hug() -> bool:
 		var normal = result.normal
 		
 		# Check if wall is vertical enough
-		var wall_angle = rad_to_deg(acos(normal.dot(Vector3.UP)))
+		var wall_angle = rad_to_deg(acos(clampf(normal.dot(Vector3.UP), -1.0, 1.0)))
 		if absf(wall_angle - 90.0) <= wall_vertical_tolerance:
 			wall_normal = normal
 			_change_state(State.WALL_HUG)

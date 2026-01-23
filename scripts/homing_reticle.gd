@@ -4,6 +4,11 @@ class_name HomingReticle
 ## Homing Reticle UI Component
 ## Attach to a Control node that contains your reticle graphic
 ## Assign this node to the PlayerController's homing_reticle export
+##
+## v1.1 FIXES:
+## - Added proper show/hide methods
+## - Fixed scale animation reset
+## - Added rotation overflow protection
 
 @export_group("Animation")
 ## Enable pulsing animation when target is locked
@@ -20,18 +25,22 @@ class_name HomingReticle
 @export var animate_rotation: bool = true
 ## Rotation speed (degrees per second)
 @export var rotation_speed: float = 90.0
+## Reticle color (tints the texture)
+@export var reticle_color: Color = Color.WHITE
 
 var base_scale: Vector2
 var time: float = 0.0
+var _is_showing: bool = false
 
 
 func _ready() -> void:
 	base_scale = scale
 	visible = false
+	_apply_color()
 
 
 func _process(delta: float) -> void:
-	if not visible:
+	if not visible or not _is_showing:
 		return
 	
 	time += delta
@@ -45,11 +54,21 @@ func _process(delta: float) -> void:
 	# Rotation animation
 	if animate_rotation:
 		rotation_degrees += rotation_speed * delta
+		# Keep rotation in bounds to avoid float overflow after long play sessions
+		if rotation_degrees > 360.0:
+			rotation_degrees -= 360.0
 
 
 ## Call this to show the reticle with a pop-in effect
 func show_reticle() -> void:
+	if _is_showing:
+		return
+	
+	_is_showing = true
 	visible = true
+	time = 0.0
+	rotation_degrees = 0.0
+	
 	scale = base_scale * 0.5
 	var tween = create_tween()
 	tween.tween_property(self, "scale", base_scale, 0.1).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
@@ -57,5 +76,29 @@ func show_reticle() -> void:
 
 ## Call this to hide the reticle
 func hide_reticle() -> void:
-	visible = false
-	scale = base_scale
+	if not _is_showing:
+		return
+	
+	_is_showing = false
+	
+	var tween = create_tween()
+	tween.tween_property(self, "scale", base_scale * 0.3, 0.05).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func(): 
+		visible = false
+		scale = base_scale
+	)
+
+
+## Apply tint color to texture rect children
+func _apply_color() -> void:
+	for child in get_children():
+		if child is TextureRect:
+			child.modulate = reticle_color
+		elif child is Sprite2D:
+			child.modulate = reticle_color
+
+
+## Set reticle color at runtime
+func set_reticle_color(color: Color) -> void:
+	reticle_color = color
+	_apply_color()
