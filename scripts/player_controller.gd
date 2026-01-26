@@ -647,9 +647,15 @@ func _process_idle(delta: float) -> void:
 	if action_just_pressed and _check_light_dash():
 		return
 	
-	# Check for Spin Dash charge
-	if action_pressed and world_input_direction.length() > 0.1:
-		spin_dash_direction = world_input_direction
+	# Check for Spin Dash charge - can start without direction (uses facing direction)
+	if action_just_pressed:
+		# Initialize spin dash direction to player's current facing
+		if player_model:
+			spin_dash_direction = -player_model.global_transform.basis.z
+			spin_dash_direction.y = 0
+			spin_dash_direction = spin_dash_direction.normalized()
+		else:
+			spin_dash_direction = _cached_camera_forward
 		_change_state(State.SPIN_DASH_CHARGE)
 		return
 	
@@ -750,21 +756,20 @@ func _process_spin_dash_charge(delta: float) -> void:
 	spin_dash_charge_timer += delta
 	spin_dash_charge_timer = minf(spin_dash_charge_timer, spin_dash_charge_time)
 	
-	# Update direction while charging
+	# Update direction ONLY when input is pressed (allows changing aim during charge)
 	if world_input_direction.length() > 0.1:
 		spin_dash_direction = world_input_direction
+		# Also rotate player model to face the new direction
+		if player_model:
+			var target_rotation = atan2(spin_dash_direction.x, spin_dash_direction.z)
+			player_model.rotation.y = target_rotation
 	
-	# Release to dash
+	# Release to dash (in current spin_dash_direction, which may be facing direction or input direction)
 	if action_just_released:
 		_release_spin_dash()
 		return
 	
-	# Cancel if no direction held
-	if world_input_direction.length() < 0.1 and not action_pressed:
-		_change_state(State.IDLE)
-		return
-	
-	# Stay still while charging
+	# Stay still while charging (don't cancel even without direction - use facing direction)
 	_apply_ground_friction(delta)
 
 
@@ -1274,6 +1279,9 @@ func _apply_ground_movement(delta: float) -> void:
 		
 		target_velocity = input_horizontal.normalized() * max_speed_horizontal * abs(world_input_direction.x)
 		target_velocity += input_depth.normalized() * max_speed_depth * abs(world_input_direction.z)
+		
+		# Rotate player model to face movement direction
+		_rotate_player_model_to_direction(world_input_direction, delta)
 	
 	# Apply slope influence
 	if floor_angle > 1.0:
@@ -1290,6 +1298,23 @@ func _apply_ground_movement(delta: float) -> void:
 	horizontal = horizontal.move_toward(target_velocity, ground_acceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+
+
+## Rotates the player model to face a given direction (for visual feedback)
+## Call this with delta for frame-rate independent rotation
+func _rotate_player_model_to_direction(direction: Vector3, delta: float = 0.016, rotation_speed: float = 15.0) -> void:
+	if not player_model:
+		return
+	if direction.length() < 0.1:
+		return
+	
+	var flat_dir = Vector3(direction.x, 0, direction.z).normalized()
+	if flat_dir.length() < 0.1:
+		return
+	
+	var target_rotation = atan2(flat_dir.x, flat_dir.z)
+	# Frame-rate independent smooth rotation
+	player_model.rotation.y = lerp_angle(player_model.rotation.y, target_rotation, clampf(rotation_speed * delta, 0.0, 1.0))
 
 
 func _apply_ground_friction(delta: float) -> void:
@@ -1337,6 +1362,9 @@ func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
 		
 		velocity.x = horizontal.x
 		velocity.z = horizontal.z
+		
+		# Rotate player model toward movement direction
+		_rotate_player_model_to_direction(world_input_direction, delta)
 
 
 func _apply_gravity(delta: float) -> void:

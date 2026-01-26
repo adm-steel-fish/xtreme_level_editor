@@ -2,9 +2,9 @@
 
 [ext_resource type="Script" uid="uid://bf743pu2fyarx" path="res://scripts/player_controller.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://deesxc8icb0xi" path="res://scripts/homing_reticle.gd" id="2_reticle"]
+[ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_camera"]
 [ext_resource type="Script" uid="uid://bts68c4b8mgga" path="res://scripts/test_enemy.gd" id="4_enemy"]
 [ext_resource type="Script" uid="uid://bp1nmct7rcark" path="res://scripts/test_currency.gd" id="5_currency"]
-[ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="5_tmr53"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
@@ -17,11 +17,15 @@ height = 1.8
 [sub_resource type="StandardMaterial3D" id="Material_player"]
 albedo_color = Color(0.2, 0.6, 1, 1)
 
-[sub_resource type="BoxMesh" id="BoxMesh_indicator"]
-size = Vector3(0.2, 0.2, 0.3)
+[sub_resource type="SphereMesh" id="SphereMesh_face"]
+radius = 0.2
+height = 0.4
 
-[sub_resource type="StandardMaterial3D" id="Material_indicator"]
-albedo_color = Color(1, 0.8, 0.2, 1)
+[sub_resource type="StandardMaterial3D" id="Material_face"]
+albedo_color = Color(1, 0.9, 0.1, 1)
+emission_enabled = true
+emission = Color(1, 0.9, 0.1, 1)
+emission_energy_multiplier = 0.8
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(60, 1, 60)
@@ -85,7 +89,7 @@ shadow_bias = 0.03
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
 script = ExtResource("1_player")
-camera = NodePath("")
+camera = NodePath("../XtremeCamera")
 homing_reticle = NodePath("../UI/HomingReticle")
 player_model = NodePath("PlayerModel")
 
@@ -98,10 +102,22 @@ shape = SubResource("CapsuleShape3D_player")
 mesh = SubResource("CapsuleMesh_player")
 surface_material_override/0 = SubResource("Material_player")
 
-[node name="FrontIndicator" type="MeshInstance3D" parent="Player/PlayerModel"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, -0.5)
-mesh = SubResource("BoxMesh_indicator")
-surface_material_override/0 = SubResource("Material_indicator")
+[node name="FaceIndicator" type="MeshInstance3D" parent="Player/PlayerModel"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -0.55)
+mesh = SubResource("SphereMesh_face")
+surface_material_override/0 = SubResource("Material_face")
+
+[node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
+transform = Transform3D(1, 0, 0, 0, 0.966, 0.259, 0, -0.259, 0.966, 0, 4, 10)
+current = true
+fov = 55.0
+script = ExtResource("3_camera")
+target = NodePath("../Player")
+height_offset = 3.0
+follow_distance = 10.0
+wall_fade_enabled = false
+smooth_position = true
+smooth_speed = 8.0
 
 [node name="UI" type="CanvasLayer" parent="."]
 
@@ -140,15 +156,17 @@ color = Color(0, 0, 0, 0.5)
 offset_left = 10.0
 offset_top = 10.0
 offset_right = 450.0
-offset_bottom = 180.0
+offset_bottom = 200.0
 text = "XTREME PLATFORMER TEST LEVEL
 
 Controls:
   WASD / Arrows - Move
   Space - Jump / Double Jump / Homing Attack
-  Ctrl - Roll / Spin Dash / Butt Bounce
+  Ctrl (idle) - Spin Dash (hold to charge, release to dash)
+  Ctrl (moving) - Roll Attack
+  Ctrl (air) - Butt Bounce
 
-Test: Platforms, Ramps (30°/45°/60°), Enemies, Rings"
+Yellow ball shows which way player is facing."
 
 [node name="Ground" type="StaticBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
@@ -377,8 +395,3 @@ shape = SubResource("CylinderShape3D_currency")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/Ring5"]
 mesh = SubResource("TorusMesh_currency")
 surface_material_override/0 = SubResource("Material_currency")
-
-[node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
-script = ExtResource("5_tmr53")
-target = NodePath("../Player")
-metadata/_custom_type_script = "uid://drgbbgnapxrpr"
