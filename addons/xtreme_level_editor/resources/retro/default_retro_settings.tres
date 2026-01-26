@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="RetroSettings" load_steps=2 format=3 uid="uid://c8xpvmfgqv2ey"]
+
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/resources/retro/retro_settings.gd" id="1_retro_settings"]
+
+[resource]
+script = ExtResource("1_retro_settings")
+setting_name = "Default Light"
+description = "Default retro settings - Light intensity (35%) for nostalgic but playable experience. Matches Sonic Mania special stage aesthetic."
+retro_enabled = true
+retro_intensity = 0.35
+vertex_jitter_override = -1.0
+affine_warp_override = -1.0
+color_reduction_override = -1.0
+dither_override = -1.0
+jitter_resolution = 128.0
+lighting_enabled = true
+light_direction = Vector3(0.3, -0.7, -0.5)
+light_color = Color(1, 0.98, 0.95, 1)
+light_intensity = 1.0
+ambient_color = Color(0.3, 0.3, 0.35, 1)
+ambient_intensity = 0.4
+use_half_lambert = true
+post_process_enabled = true
+render_scale = 0.75
+color_band_levels = 64

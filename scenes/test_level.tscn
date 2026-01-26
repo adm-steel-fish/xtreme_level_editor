@@ -1,10 +1,10 @@
-[gd_scene load_steps=24 format=3 uid="uid://cldvt7hyn7ouo"]
+[gd_scene load_steps=22 format=3 uid="uid://cldvt7hyn7ouo"]
 
-[ext_resource type="Script" uid="uid://bf743pu2fyarx" path="res://scripts/player_controller.gd" id="1_player"]
-[ext_resource type="Script" uid="uid://deesxc8icb0xi" path="res://scripts/homing_reticle.gd" id="2_reticle"]
-[ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_camera"]
-[ext_resource type="Script" uid="uid://bts68c4b8mgga" path="res://scripts/test_enemy.gd" id="4_enemy"]
-[ext_resource type="Script" uid="uid://bp1nmct7rcark" path="res://scripts/test_currency.gd" id="5_currency"]
+[ext_resource type="Script" uid="uid://c0r4qbhmkj8sl" path="res://scripts/player_controller.gd" id="1_player"]
+[ext_resource type="Script" uid="uid://bq4xq87iqcqiv" path="res://scripts/homing_reticle.gd" id="2_reticle"]
+[ext_resource type="Script" uid="uid://bsqakvqjfrqx7" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_camera"]
+[ext_resource type="Script" path="res://scripts/test_enemy.gd" id="4_enemy"]
+[ext_resource type="Script" path="res://scripts/test_currency.gd" id="5_currency"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
@@ -15,16 +15,16 @@ radius = 0.4
 height = 1.8
 
 [sub_resource type="StandardMaterial3D" id="Material_player"]
-albedo_color = Color(0.2, 0.6, 1, 1)
+albedo_color = Color(0.2, 0.6, 1.0, 1.0)
 
 [sub_resource type="SphereMesh" id="SphereMesh_face"]
 radius = 0.2
 height = 0.4
 
 [sub_resource type="StandardMaterial3D" id="Material_face"]
-albedo_color = Color(1, 0.9, 0.1, 1)
+albedo_color = Color(1.0, 0.9, 0.1, 1.0)
 emission_enabled = true
-emission = Color(1, 0.9, 0.1, 1)
+emission = Color(1.0, 0.9, 0.1, 1.0)
 emission_energy_multiplier = 0.8
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
@@ -34,19 +34,19 @@ size = Vector3(60, 1, 60)
 size = Vector3(60, 1, 60)
 
 [sub_resource type="StandardMaterial3D" id="Material_ground"]
-albedo_color = Color(0.35, 0.55, 0.35, 1)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_platform"]
-size = Vector3(4, 0.5, 4)
+albedo_color = Color(0.35, 0.55, 0.35, 1.0)
 
 [sub_resource type="BoxMesh" id="BoxMesh_platform"]
 size = Vector3(4, 0.5, 4)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_platform"]
+size = Vector3(4, 0.5, 4)
+
 [sub_resource type="StandardMaterial3D" id="Material_platform"]
-albedo_color = Color(0.6, 0.45, 0.25, 1)
+albedo_color = Color(0.6, 0.45, 0.25, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="Material_ramp"]
-albedo_color = Color(0.5, 0.5, 0.65, 1)
+albedo_color = Color(0.5, 0.5, 0.65, 1.0)
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_enemy"]
 radius = 0.6
@@ -56,26 +56,26 @@ radius = 0.6
 height = 1.2
 
 [sub_resource type="StandardMaterial3D" id="Material_enemy"]
-albedo_color = Color(0.9, 0.2, 0.2, 1)
+albedo_color = Color(0.9, 0.2, 0.2, 1.0)
 emission_enabled = true
-emission = Color(0.5, 0.1, 0.1, 1)
+emission = Color(0.5, 0.1, 0.1, 1.0)
 emission_energy_multiplier = 0.3
-
-[sub_resource type="CylinderShape3D" id="CylinderShape3D_currency"]
-height = 0.3
-radius = 0.4
 
 [sub_resource type="TorusMesh" id="TorusMesh_currency"]
 inner_radius = 0.15
 outer_radius = 0.4
 
 [sub_resource type="StandardMaterial3D" id="Material_currency"]
-albedo_color = Color(1, 0.85, 0.1, 1)
+albedo_color = Color(1.0, 0.85, 0.1, 1.0)
 metallic = 0.8
 roughness = 0.2
 emission_enabled = true
-emission = Color(1, 0.85, 0.1, 1)
+emission = Color(1.0, 0.85, 0.1, 1.0)
 emission_energy_multiplier = 0.2
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_currency"]
+height = 0.3
+radius = 0.4
 
 [node name="TestLevel" type="Node3D"]
 
@@ -107,7 +107,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -0.55)
 mesh = SubResource("SphereMesh_face")
 surface_material_override/0 = SubResource("Material_face")
 
-[node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
+[node name="XtremeCamera" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.966, 0.259, 0, -0.259, 0.966, 0, 4, 10)
 current = true
 fov = 55.0
@@ -115,6 +115,7 @@ script = ExtResource("3_camera")
 target = NodePath("../Player")
 height_offset = 3.0
 follow_distance = 10.0
+pitch_angle = -15.0
 wall_fade_enabled = false
 smooth_position = true
 smooth_speed = 8.0
@@ -123,7 +124,6 @@ smooth_speed = 8.0
 
 [node name="HomingReticle" type="Control" parent="UI"]
 visible = false
-layout_mode = 3
 anchors_preset = 0
 offset_right = 64.0
 offset_bottom = 64.0
@@ -131,7 +131,7 @@ pivot_offset = Vector2(32, 32)
 script = ExtResource("2_reticle")
 
 [node name="ReticleOuter" type="ColorRect" parent="UI/HomingReticle"]
-layout_mode = 0
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
@@ -139,7 +139,7 @@ grow_vertical = 2
 color = Color(1, 0.3, 0.1, 0.8)
 
 [node name="ReticleInner" type="ColorRect" parent="UI/HomingReticle"]
-layout_mode = 0
+anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
