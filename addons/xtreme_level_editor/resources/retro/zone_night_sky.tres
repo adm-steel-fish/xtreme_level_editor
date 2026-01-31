@@ -1,0 +1,35 @@
+[gd_resource type="Resource" script_class="ZoneVisualSettings" load_steps=2 format=3 uid="uid://zone_night_sky"]
+
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/resources/retro/zone_visual_settings.gd" id="1_zone_settings"]
+
+[resource]
+script = ExtResource("1_zone_settings")
+zone_name = "Night Sky Zone"
+zone_act = 1
+description = "A nighttime zone with purple sky - inspired by Sonic Mania special stages"
+retro_enabled = true
+retro_intensity = 0.35
+vertex_jitter_override = -1.0
+affine_warp_override = -1.0
+color_reduction_override = -1.0
+dither_override = -1.0
+light_direction = Vector3(0.3, -0.7, -0.5)
+light_color = Color(1, 0.98, 0.95, 1)
+light_intensity = 1.0
+ambient_color = Color(0.3, 0.3, 0.35, 1)
+ambient_intensity = 0.4
+fog_enabled = true
+fog_color = Color(0.1, 0.05, 0.15, 1)
+fog_start_distance = 60.0
+fog_end_distance = 150.0
+effect_distance = 100.0
+sky_top_color = Color(0.2, 0.1, 0.4, 1)
+sky_horizon_color = Color(0.5, 0.3, 0.6, 1)
+ground_color = Color(0.1, 0.05, 0.15, 1)
+color_tint = Color(1, 1, 1, 1)
+saturation = 1.0
+contrast = 1.0
+brightness = 1.0
+post_process_enabled = true
+render_scale = 0.75
+color_band_levels = 64

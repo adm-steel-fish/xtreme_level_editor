@@ -1,8 +1,10 @@
-[gd_scene load_steps=15 format=3 uid="uid://ck2y8qxvmh7j0"]
+[gd_scene load_steps=20 format=3 uid="uid://ck2y8qxvmh7j0"]
 
 [ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_standard.gdshader" id="1_retro_standard"]
-[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_vertex_color.gdshader" id="2_retro_vertex_color"]
-[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="3_retro_unlit"]
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="2_retro_unlit"]
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_vertex_color.gdshader" id="3_retro_vertex_color"]
+[ext_resource type="Script" path="res://scripts/test_currency.gd" id="4_currency"]
+[ext_resource type="Script" path="res://scripts/test_enemy.gd" id="5_enemy"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 sky_top_color = Color(0.2, 0.1, 0.4, 1)
@@ -35,19 +37,16 @@ shader_parameter/light_intensity = 1.0
 shader_parameter/ambient_color = Vector3(0.3, 0.3, 0.35)
 shader_parameter/ambient_intensity = 0.4
 shader_parameter/use_half_lambert = true
-shader_parameter/albedo = Color(0.4, 0.6, 0.3, 1)
+shader_parameter/albedo = Color(0.3, 0.5, 0.25, 1)
 shader_parameter/use_texture = false
 shader_parameter/use_vertex_color = false
-shader_parameter/vertex_color_intensity = 1.0
-shader_parameter/emission_color = Vector3(0, 0, 0)
-shader_parameter/emission_intensity = 0.0
-shader_parameter/roughness = 0.8
+shader_parameter/roughness = 0.9
 shader_parameter/metallic = 0.0
 
 [sub_resource type="BoxMesh" id="BoxMesh_floor"]
-size = Vector3(20, 0.5, 20)
+size = Vector3(30, 0.5, 30)
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_cube"]
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_platform"]
 shader = ExtResource("1_retro_standard")
 shader_parameter/retro_enabled = true
 shader_parameter/retro_intensity = 0.35
@@ -63,19 +62,17 @@ shader_parameter/light_intensity = 1.0
 shader_parameter/ambient_color = Vector3(0.3, 0.3, 0.35)
 shader_parameter/ambient_intensity = 0.4
 shader_parameter/use_half_lambert = true
-shader_parameter/albedo = Color(0.8, 0.2, 0.2, 1)
+shader_parameter/albedo = Color(0.6, 0.45, 0.25, 1)
 shader_parameter/use_texture = false
 shader_parameter/use_vertex_color = false
-shader_parameter/vertex_color_intensity = 1.0
-shader_parameter/emission_color = Vector3(0, 0, 0)
-shader_parameter/emission_intensity = 0.0
-shader_parameter/roughness = 0.7
+shader_parameter/roughness = 0.8
 shader_parameter/metallic = 0.0
 
-[sub_resource type="BoxMesh" id="BoxMesh_cube"]
+[sub_resource type="BoxMesh" id="BoxMesh_platform"]
+size = Vector3(3, 0.5, 3)
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_ring"]
-shader = ExtResource("3_retro_unlit")
+shader = ExtResource("2_retro_unlit")
 shader_parameter/retro_enabled = true
 shader_parameter/retro_intensity = 0.35
 shader_parameter/vertex_jitter_override = -1.0
@@ -85,7 +82,7 @@ shader_parameter/dither_override = -1.0
 shader_parameter/jitter_resolution = 128.0
 shader_parameter/albedo = Color(1, 0.85, 0, 1)
 shader_parameter/use_texture = false
-shader_parameter/use_vertex_color = true
+shader_parameter/use_vertex_color = false
 shader_parameter/brightness = 1.2
 shader_parameter/pulse_enabled = true
 shader_parameter/pulse_speed = 3.0
@@ -96,16 +93,51 @@ shader_parameter/rim_color = Vector3(1, 1, 1)
 shader_parameter/rim_intensity = 0.3
 shader_parameter/rim_power = 2.0
 shader_parameter/flash_enabled = false
-shader_parameter/flash_color = Vector3(1, 1, 1)
-shader_parameter/flash_intensity = 0.0
 shader_parameter/fade_alpha = 1.0
 
 [sub_resource type="TorusMesh" id="TorusMesh_ring"]
-inner_radius = 0.3
-outer_radius = 0.5
+inner_radius = 0.15
+outer_radius = 0.4
+rings = 16
+ring_segments = 24
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_sphere"]
-shader = ExtResource("3_retro_unlit")
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_ring"]
+height = 0.3
+radius = 0.4
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_enemy"]
+shader = ExtResource("3_retro_vertex_color")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/vertex_jitter_override = -1.0
+shader_parameter/color_reduction_override = -1.0
+shader_parameter/dither_override = -1.0
+shader_parameter/jitter_resolution = 128.0
+shader_parameter/lighting_enabled = true
+shader_parameter/light_direction = Vector3(0.3, -0.7, -0.5)
+shader_parameter/light_color = Vector3(1, 0.98, 0.95)
+shader_parameter/light_intensity = 1.0
+shader_parameter/ambient_color = Vector3(0.35, 0.35, 0.4)
+shader_parameter/ambient_intensity = 0.5
+shader_parameter/use_half_lambert = true
+shader_parameter/color_tint = Color(0.9, 0.2, 0.2, 1)
+shader_parameter/saturation_boost = 1.2
+shader_parameter/roughness = 0.9
+shader_parameter/damage_flash_enabled = false
+shader_parameter/damage_flash_color = Vector3(1, 1, 1)
+shader_parameter/damage_flash_intensity = 0.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_enemy"]
+radius = 0.6
+height = 1.2
+radial_segments = 16
+rings = 8
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_enemy"]
+radius = 0.6
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_blue_sphere"]
+shader = ExtResource("2_retro_unlit")
 shader_parameter/retro_enabled = true
 shader_parameter/retro_intensity = 0.35
 shader_parameter/vertex_jitter_override = -1.0
@@ -115,24 +147,21 @@ shader_parameter/dither_override = -1.0
 shader_parameter/jitter_resolution = 128.0
 shader_parameter/albedo = Color(0.2, 0.5, 1, 1)
 shader_parameter/use_texture = false
-shader_parameter/use_vertex_color = true
+shader_parameter/use_vertex_color = false
 shader_parameter/brightness = 1.1
 shader_parameter/pulse_enabled = false
-shader_parameter/pulse_speed = 3.0
-shader_parameter/pulse_intensity = 0.15
-shader_parameter/pulse_color = Vector3(1, 1, 1)
 shader_parameter/rim_enabled = true
 shader_parameter/rim_color = Vector3(1, 1, 1)
 shader_parameter/rim_intensity = 0.4
 shader_parameter/rim_power = 2.5
 shader_parameter/flash_enabled = false
-shader_parameter/flash_color = Vector3(1, 1, 1)
-shader_parameter/flash_intensity = 0.0
 shader_parameter/fade_alpha = 1.0
 
 [sub_resource type="SphereMesh" id="SphereMesh_blue"]
 radius = 0.5
 height = 1.0
+radial_segments = 16
+rings = 8
 
 [node name="RetroShaderTest" type="Node3D"]
 
@@ -146,30 +175,130 @@ light_energy = 0.5
 shadow_enabled = true
 
 [node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.939693, 0.34202, 0, -0.34202, 0.939693, 0, 5, 10)
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 6, 12)
 
 [node name="Floor" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
 material_override = SubResource("ShaderMaterial_floor")
 mesh = SubResource("BoxMesh_floor")
 
-[node name="TestCube" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1, 0)
-material_override = SubResource("ShaderMaterial_cube")
-mesh = SubResource("BoxMesh_cube")
+[node name="Platform1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, -6)
+material_override = SubResource("ShaderMaterial_platform")
+mesh = SubResource("BoxMesh_platform")
 
-[node name="TestRing" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+[node name="Platform2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 1.0, -6)
+material_override = SubResource("ShaderMaterial_platform")
+mesh = SubResource("BoxMesh_platform")
+
+[node name="Rings" type="Node3D" parent="."]
+
+[node name="Ring1" type="Area3D" parent="Rings"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1.5, 0)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("4_currency")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring1"]
 material_override = SubResource("ShaderMaterial_ring")
 mesh = SubResource("TorusMesh_ring")
 
-[node name="TestBlueSphere" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 0)
-material_override = SubResource("ShaderMaterial_sphere")
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring1"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring2" type="Area3D" parent="Rings"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 1.5, 0)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("4_currency")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring2"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring2"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring3" type="Area3D" parent="Rings"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1.5, 0)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("4_currency")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring3"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring3"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring4" type="Area3D" parent="Rings"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1.5, 0)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("4_currency")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring4"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring4"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Enemies" type="Node3D" parent="."]
+
+[node name="Enemy1" type="Area3D" parent="Enemies" groups=["enemies", "targetable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 1.5, 0)
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("5_enemy")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Enemies/Enemy1"]
+material_override = SubResource("ShaderMaterial_enemy")
+mesh = SubResource("SphereMesh_enemy")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Enemies/Enemy1"]
+shape = SubResource("SphereShape3D_enemy")
+
+[node name="Enemy2" type="Area3D" parent="Enemies" groups=["enemies", "targetable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 1.5, 0)
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("5_enemy")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Enemies/Enemy2"]
+material_override = SubResource("ShaderMaterial_enemy")
+mesh = SubResource("SphereMesh_enemy")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Enemies/Enemy2"]
+shape = SubResource("SphereShape3D_enemy")
+
+[node name="BlueSpheres" type="Node3D" parent="."]
+
+[node name="BlueSphere1" type="MeshInstance3D" parent="BlueSpheres"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -4)
+material_override = SubResource("ShaderMaterial_blue_sphere")
+mesh = SubResource("SphereMesh_blue")
+
+[node name="BlueSphere2" type="MeshInstance3D" parent="BlueSpheres"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1, -4)
+material_override = SubResource("ShaderMaterial_blue_sphere")
+mesh = SubResource("SphereMesh_blue")
+
+[node name="BlueSphere3" type="MeshInstance3D" parent="BlueSpheres"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1, -4)
+material_override = SubResource("ShaderMaterial_blue_sphere")
 mesh = SubResource("SphereMesh_blue")
 
 [node name="Label3D" type="Label3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
-text = "Retro Shader Test Scene
-Standard (Cube) | Unlit (Ring, Sphere)"
-font_size = 32
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 0)
+text = "PS1/Saturn Retro Shader Test
+Rings (Unlit+Pulse) | Enemies (Vertex Color) | Spheres (Unlit+Rim)"
+font_size = 28

@@ -1,0 +1,218 @@
+[gd_scene load_steps=16 format=3 uid="uid://parallax_test_scene"]
+
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_standard.gdshader" id="1_retro_standard"]
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="2_retro_unlit"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/parallax_background_3d.gd" id="3_parallax_bg"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/parallax_layer_3d.gd" id="4_parallax_layer"]
+[ext_resource type="Script" path="res://scripts/test_camera_controller.gd" id="5_camera_controller"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.05, 0.02, 0.15, 1)
+sky_horizon_color = Color(0.3, 0.15, 0.4, 1)
+ground_bottom_color = Color(0.02, 0.01, 0.05, 1)
+ground_horizon_color = Color(0.15, 0.08, 0.2, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+ambient_light_source = 2
+ambient_light_color = Color(0.25, 0.2, 0.35, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_floor"]
+shader = ExtResource("1_retro_standard")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/vertex_jitter_override = -1.0
+shader_parameter/affine_warp_override = -1.0
+shader_parameter/color_reduction_override = -1.0
+shader_parameter/dither_override = -1.0
+shader_parameter/jitter_resolution = 128.0
+shader_parameter/lighting_enabled = true
+shader_parameter/light_direction = Vector3(0.3, -0.7, -0.5)
+shader_parameter/light_color = Vector3(1, 0.98, 0.95)
+shader_parameter/light_intensity = 1.0
+shader_parameter/ambient_color = Vector3(0.3, 0.3, 0.35)
+shader_parameter/ambient_intensity = 0.4
+shader_parameter/use_half_lambert = true
+shader_parameter/albedo = Color(0.2, 0.35, 0.5, 1)
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/roughness = 0.9
+shader_parameter/metallic = 0.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+size = Vector3(100, 0.5, 100)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_star"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = false
+shader_parameter/albedo = Color(1, 1, 0.9, 1)
+shader_parameter/brightness = 1.5
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 2.0
+shader_parameter/pulse_intensity = 0.3
+shader_parameter/rim_enabled = false
+
+[sub_resource type="SphereMesh" id="SphereMesh_star"]
+radius = 0.3
+height = 0.6
+radial_segments = 8
+rings = 4
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_bg_element"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = false
+shader_parameter/albedo = Color(0.4, 0.3, 0.6, 1)
+shader_parameter/brightness = 1.0
+shader_parameter/pulse_enabled = false
+shader_parameter/rim_enabled = false
+
+[sub_resource type="BoxMesh" id="BoxMesh_bg_element"]
+size = Vector3(8, 12, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_mid_element"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = false
+shader_parameter/albedo = Color(0.3, 0.5, 0.4, 1)
+shader_parameter/brightness = 1.0
+shader_parameter/pulse_enabled = false
+shader_parameter/rim_enabled = false
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_column"]
+top_radius = 2.0
+bottom_radius = 2.5
+height = 20.0
+radial_segments = 8
+
+[node name="ParallaxBackgroundTest" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 20, 0)
+light_color = Color(0.9, 0.85, 1, 1)
+light_energy = 0.6
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.965926, 0.258819, 0, -0.258819, 0.965926, 0, 5, 15)
+
+[node name="CameraController" type="Node3D" parent="Camera3D"]
+script = ExtResource("5_camera_controller")
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+material_override = SubResource("ShaderMaterial_floor")
+mesh = SubResource("BoxMesh_floor")
+
+[node name="ParallaxBackground3D" type="Node3D" parent="."]
+script = ExtResource("3_parallax_bg")
+auto_find_camera = true
+update_in_editor = true
+
+[node name="SkyLayer" type="Node3D" parent="ParallaxBackground3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 30, -200)
+script = ExtResource("4_parallax_layer")
+parallax_factor = 0.05
+vertical_parallax_factor = 0.02
+base_distance = 200.0
+repeat_x = true
+layer_width = 100.0
+
+[node name="Star1" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 10, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star2" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 25, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star3" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 15, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star4" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 30, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star5" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 5, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="FarLayer" type="Node3D" parent="ParallaxBackground3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -150)
+script = ExtResource("4_parallax_layer")
+parallax_factor = 0.15
+vertical_parallax_factor = 0.05
+base_distance = 150.0
+repeat_x = true
+layer_width = 120.0
+
+[node name="Building1" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -40, 6, 0)
+material_override = SubResource("ShaderMaterial_bg_element")
+mesh = SubResource("BoxMesh_bg_element")
+
+[node name="Building2" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 8, 0)
+material_override = SubResource("ShaderMaterial_bg_element")
+mesh = SubResource("BoxMesh_bg_element")
+
+[node name="Building3" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 5, 0)
+material_override = SubResource("ShaderMaterial_bg_element")
+mesh = SubResource("BoxMesh_bg_element")
+
+[node name="Building4" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 7, 0)
+material_override = SubResource("ShaderMaterial_bg_element")
+mesh = SubResource("BoxMesh_bg_element")
+
+[node name="Building5" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 9, 0)
+material_override = SubResource("ShaderMaterial_bg_element")
+mesh = SubResource("BoxMesh_bg_element")
+
+[node name="MidLayer" type="Node3D" parent="ParallaxBackground3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -80)
+script = ExtResource("4_parallax_layer")
+parallax_factor = 0.4
+vertical_parallax_factor = 0.1
+base_distance = 80.0
+repeat_x = true
+layer_width = 80.0
+
+[node name="Column1" type="MeshInstance3D" parent="ParallaxBackground3D/MidLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 10, 0)
+material_override = SubResource("ShaderMaterial_mid_element")
+mesh = SubResource("CylinderMesh_column")
+
+[node name="Column2" type="MeshInstance3D" parent="ParallaxBackground3D/MidLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10, 0)
+material_override = SubResource("ShaderMaterial_mid_element")
+mesh = SubResource("CylinderMesh_column")
+
+[node name="Column3" type="MeshInstance3D" parent="ParallaxBackground3D/MidLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 10, 0)
+material_override = SubResource("ShaderMaterial_mid_element")
+mesh = SubResource("CylinderMesh_column")
+
+[node name="Column4" type="MeshInstance3D" parent="ParallaxBackground3D/MidLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 60, 10, 0)
+material_override = SubResource("ShaderMaterial_mid_element")
+mesh = SubResource("CylinderMesh_column")
+
+[node name="Label3D" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
+text = "Parallax Background Test
+Use WASD to move camera and see parallax effect"
+font_size = 32

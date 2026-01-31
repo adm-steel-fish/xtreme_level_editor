@@ -1,0 +1,53 @@
+[gd_scene load_steps=5 format=3 uid="uid://dretro_ring_prefab"]
+
+[ext_resource type="Script" path="res://scripts/test_currency.gd" id="1_currency"]
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="2_shader"]
+
+[sub_resource type="TorusMesh" id="TorusMesh_ring"]
+inner_radius = 0.15
+outer_radius = 0.4
+rings = 16
+ring_segments = 24
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ring"]
+shader = ExtResource("2_shader")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/vertex_jitter_override = -1.0
+shader_parameter/affine_warp_override = -1.0
+shader_parameter/color_reduction_override = -1.0
+shader_parameter/dither_override = -1.0
+shader_parameter/jitter_resolution = 128.0
+shader_parameter/albedo = Color(1, 0.85, 0, 1)
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/brightness = 1.2
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 3.0
+shader_parameter/pulse_intensity = 0.15
+shader_parameter/pulse_color = Vector3(1, 1, 1)
+shader_parameter/rim_enabled = true
+shader_parameter/rim_color = Vector3(1, 1, 1)
+shader_parameter/rim_intensity = 0.3
+shader_parameter/rim_power = 2.0
+shader_parameter/flash_enabled = false
+shader_parameter/flash_color = Vector3(1, 1, 1)
+shader_parameter/flash_intensity = 0.0
+shader_parameter/fade_alpha = 1.0
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_collision"]
+height = 0.3
+radius = 0.4
+
+[node name="RetroRing" type="Area3D"]
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("1_currency")
+use_retro_shader = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CylinderShape3D_collision")

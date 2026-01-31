@@ -256,10 +256,197 @@ addons/xtreme_level_editor/
 │   ├── retro_shader_params.gd       # Global controller
 │   └── retro_material.gd            # Material factory
 ├── nodes/retro/
-│   └── retro_viewport_container.gd  # Post-process viewport
+│   ├── retro_viewport_container.gd  # Post-process viewport
+│   ├── parallax_background_3d.gd    # Background system
+│   └── parallax_layer_3d.gd         # Individual layer
 ├── resources/retro/
 │   ├── retro_settings.gd            # Settings resource class
-│   └── default_retro_settings.tres  # Default configuration
+│   ├── zone_visual_settings.gd      # Per-zone settings
+│   ├── default_retro_settings.tres  # Default configuration
+│   └── zone_night_sky.tres          # Example zone preset
 └── scenes/retro/
-    └── retro_viewport_container.tscn
+    ├── retro_viewport_container.tscn
+    └── prefabs/
+        ├── retro_ring.tscn
+        ├── retro_blue_sphere.tscn
+        ├── retro_red_sphere.tscn
+        ├── retro_spring.tscn
+        └── retro_enemy.tscn
 ```
+
+---
+
+## Parallax Background System
+
+The `ParallaxBackground3D` system creates depth with multiple 2D layers in 3D space.
+
+### Layer Structure
+
+| Layer | Parallax Factor | Description |
+|-------|-----------------|-------------|
+| Sky | 0.0 - 0.1 | Furthest, barely moves (stars, moon) |
+| Far | 0.1 - 0.3 | Slow movement (mountains, distant buildings) |
+| Mid | 0.3 - 0.6 | Medium movement (architecture, trees) |
+| Near | 0.6 - 0.9 | Fast movement (foreground elements) |
+
+### Setup
+
+```gdscript
+# Create a parallax background
+var bg = ParallaxBackground3D.new()
+bg.auto_find_camera = true
+add_child(bg)
+
+# Add layers programmatically
+var sky = bg.create_color_layer(Color(0.1, 0.05, 0.2), 0.05, 200.0)
+var far = bg.create_sprite_layer(mountain_texture, 0.2, 100.0)
+
+# Or add ParallaxLayer3D nodes in the editor
+```
+
+### ParallaxLayer3D Properties
+
+| Property | Description |
+|----------|-------------|
+| `parallax_factor` | Movement ratio (0.0-1.0) |
+| `vertical_parallax_factor` | Vertical movement (usually less) |
+| `base_distance` | Distance from camera (Z position) |
+| `repeat_x/y` | Enable horizontal/vertical tiling |
+| `layer_width/height` | Size for repeat calculations |
+| `auto_scroll_speed` | Constant scroll (for animated backgrounds) |
+
+---
+
+## Zone Visual Settings
+
+Each zone can have unique visual parameters via `ZoneVisualSettings` resources.
+
+### Usage
+
+```gdscript
+# Load zone settings
+var zone_settings = load("res://zones/green_hill/visual_settings.tres")
+
+# Apply when entering zone
+zone_settings.apply_to_scene(get_tree().current_scene)
+```
+
+### Included Presets
+
+| Preset | Description |
+|--------|-------------|
+| `create_green_hill_preset()` | Bright, sunny, grassy |
+| `create_chemical_plant_preset()` | Industrial, purple tones |
+| `create_lava_reef_preset()` | Hot, volcanic, orange/red |
+| `create_night_preset()` | Dark, blue nighttime |
+
+### Creating Custom Zones
+
+1. Create new `ZoneVisualSettings` resource
+2. Configure lighting, sky, fog, and retro intensity
+3. Assign to your zone scene
+4. Call `apply_to_scene()` when zone loads
+
+---
+
+## Lighting System (RetroLightManager)
+
+The `RetroLightManager` provides centralized control over PS1/Saturn-style vertex lighting.
+
+### Features
+
+- **Global Directional Light** - Single light direction for all objects
+- **Gouraud Shading** - Per-vertex lighting calculation (half-lambert default)
+- **Ambient Color** - Flat ambient term for shadowed areas
+- **Distance Fog** - Objects fade to fog color at distance
+- **Height Fog** - Optional vertical fog gradient
+
+### Usage
+
+```gdscript
+# Add RetroLightManager to your scene
+var light_mgr = RetroLightManager.new()
+add_child(light_mgr)
+
+# Configure lighting
+light_mgr.light_direction = Vector3(0.3, -0.8, -0.4)
+light_mgr.light_color = Color(1.0, 0.98, 0.9)
+light_mgr.light_intensity = 1.2
+light_mgr.ambient_color = Color(0.4, 0.45, 0.5)
+
+# Enable fog
+light_mgr.fog_enabled = true
+light_mgr.fog_color = Color(0.3, 0.35, 0.4)
+light_mgr.fog_start = 30.0
+light_mgr.fog_end = 100.0
+
+# Apply a preset
+light_mgr.apply_sunny_preset()
+light_mgr.apply_night_preset()
+light_mgr.apply_indoor_preset()
+light_mgr.apply_sunset_preset()
+```
+
+### Lighting Presets
+
+| Preset | Description |
+|--------|-------------|
+| `apply_sunny_preset()` | Bright outdoor daylight |
+| `apply_night_preset()` | Dark blue nighttime |
+| `apply_indoor_preset()` | Warm interior lighting |
+| `apply_sunset_preset()` | Orange dramatic sunset |
+
+---
+
+## Blob Shadow System
+
+Simple circular shadows for PS1/Saturn-style rendering (no real-time shadows).
+
+### Usage
+
+```gdscript
+# Add as child of player/character
+var shadow = preload("res://addons/xtreme_level_editor/scenes/retro/prefabs/blob_shadow.tscn").instantiate()
+player.add_child(shadow)
+
+# Configure appearance
+shadow.shadow_size = 1.5
+shadow.shadow_color = Color(0, 0, 0, 0.5)
+shadow.shadow_softness = 0.3
+shadow.distance_scaling = true  # Smaller when far from ground
+```
+
+### Properties
+
+| Property | Description |
+|----------|-------------|
+| `shadow_size` | Diameter of the shadow |
+| `shadow_color` | Color and alpha of shadow |
+| `shadow_softness` | Edge softness (0 = hard, 1 = very soft) |
+| `shadow_strength` | Overall opacity (0-1) |
+| `distance_scaling` | Shrink shadow when far from ground |
+| `max_distance` | Maximum raycast distance |
+
+---
+
+## Fog Parameters
+
+All lit retro shaders support distance and height fog.
+
+### Distance Fog
+
+| Parameter | Description |
+|-----------|-------------|
+| `fog_enabled` | Toggle fog on/off |
+| `fog_color` | Color objects fade to |
+| `fog_start` | Distance where fog begins |
+| `fog_end` | Distance where fog is 100% |
+
+### Height Fog
+
+| Parameter | Description |
+|-----------|-------------|
+| `height_fog_enabled` | Enable vertical fog |
+| `height_fog_bottom` | Y position of maximum fog |
+| `height_fog_top` | Y position of no fog |
+| `height_fog_density` | Maximum fog density (0-1) |

@@ -1,0 +1,49 @@
+[gd_scene load_steps=5 format=3 uid="uid://dretro_blue_sphere_prefab"]
+
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="1_shader"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_sphere"]
+radius = 0.5
+height = 1.0
+radial_segments = 16
+rings = 8
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_sphere"]
+shader = ExtResource("1_shader")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/vertex_jitter_override = -1.0
+shader_parameter/affine_warp_override = -1.0
+shader_parameter/color_reduction_override = -1.0
+shader_parameter/dither_override = -1.0
+shader_parameter/jitter_resolution = 128.0
+shader_parameter/albedo = Color(0.2, 0.5, 1, 1)
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/brightness = 1.1
+shader_parameter/pulse_enabled = false
+shader_parameter/pulse_speed = 3.0
+shader_parameter/pulse_intensity = 0.15
+shader_parameter/pulse_color = Vector3(1, 1, 1)
+shader_parameter/rim_enabled = true
+shader_parameter/rim_color = Vector3(1, 1, 1)
+shader_parameter/rim_intensity = 0.4
+shader_parameter/rim_power = 2.5
+shader_parameter/flash_enabled = false
+shader_parameter/flash_color = Vector3(1, 1, 1)
+shader_parameter/flash_intensity = 0.0
+shader_parameter/fade_alpha = 1.0
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_collision"]
+radius = 0.5
+
+[node name="RetroBlueSphere" type="Area3D"]
+collision_layer = 4
+collision_mask = 1
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+material_override = SubResource("ShaderMaterial_sphere")
+mesh = SubResource("SphereMesh_sphere")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape3D_collision")

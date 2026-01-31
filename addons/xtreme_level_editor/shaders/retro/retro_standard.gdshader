@@ -40,6 +40,17 @@ uniform vec3 ambient_color : source_color = vec3(0.3, 0.3, 0.35);
 uniform float ambient_intensity : hint_range(0.0, 1.0, 0.05) = 0.4;
 uniform bool use_half_lambert = true; // Softer shading like Sonic Mania
 
+// ===== FOG SETTINGS =====
+group_uniforms fog;
+uniform bool fog_enabled = false;
+uniform vec3 fog_color : source_color = vec3(0.1, 0.1, 0.15);
+uniform float fog_start : hint_range(0.0, 500.0) = 50.0;
+uniform float fog_end : hint_range(10.0, 1000.0) = 150.0;
+uniform bool height_fog_enabled = false;
+uniform float height_fog_bottom : hint_range(-100.0, 100.0) = -10.0;
+uniform float height_fog_top : hint_range(-100.0, 200.0) = 30.0;
+uniform float height_fog_density : hint_range(0.0, 1.0) = 0.5;
+
 // ===== APPEARANCE =====
 group_uniforms appearance;
 uniform vec4 albedo : source_color = vec4(1.0, 1.0, 1.0, 1.0);
@@ -61,6 +72,8 @@ varying vec3 vertex_light;       // Gouraud lighting result
 varying vec2 affine_uv;          // UV * depth for affine mapping
 varying float inv_depth;          // 1/depth for affine reconstruction
 varying vec4 v_color;            // Vertex color passthrough
+varying float fog_factor;        // Distance fog factor
+varying vec3 world_position;     // World position for height fog
 
 void vertex() {
 	// ===== GET EFFECT INTENSITIES =====
@@ -108,6 +121,11 @@ void vertex() {
 	
 	// ===== VERTEX COLOR PASSTHROUGH =====
 	v_color = COLOR;
+	
+	// ===== FOG CALCULATION =====
+	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float distance_from_camera = length(view_pos.xyz);
+	fog_factor = clamp((distance_from_camera - fog_start) / (fog_end - fog_start), 0.0, 1.0);
 }
 
 void fragment() {
@@ -162,7 +180,23 @@ void fragment() {
 	}
 	
 	// ===== OUTPUT =====
-	ALBEDO = final_color;
+	vec3 output_color = final_color;
+	
+	// Apply distance fog
+	if (fog_enabled) {
+		float final_fog = fog_factor;
+		
+		// Add height fog if enabled
+		if (height_fog_enabled) {
+			float height_factor = clamp((world_position.y - height_fog_bottom) / (height_fog_top - height_fog_bottom), 0.0, 1.0);
+			height_factor = 1.0 - height_factor; // Invert so fog is denser at bottom
+			final_fog = max(final_fog, height_factor * height_fog_density);
+		}
+		
+		output_color = mix(output_color, fog_color, final_fog);
+	}
+	
+	ALBEDO = output_color;
 	ROUGHNESS = roughness;
 	METALLIC = metallic;
 	
