@@ -1,0 +1,24 @@
+[gd_scene load_steps=2 format=3 uid="uid://retro_hud_scene"]
+
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/ui/retro_hud/retro_hud.gd" id="1_retro_hud"]
+
+[node name="RetroHUD" type="CanvasLayer"]
+layer = 100
+script = ExtResource("1_retro_hud")
+rings = 0
+score = 0
+lives = 3
+time_seconds = 0.0
+font_color = Color(1, 1, 1, 1)
+shadow_color = Color(0, 0, 0, 0.8)
+ring_color = Color(1, 0.85, 0, 1)
+warning_color = Color(1, 0.3, 0.3, 1)
+flash_zero_rings = true
+animate_ring_icon = true
+ring_rotation_speed = 180.0
+timer_enabled = true
+timer_counting = false
+count_up = true
+time_limit = 600.0
+margin = Vector2(16, 16)
+element_spacing = 8.0

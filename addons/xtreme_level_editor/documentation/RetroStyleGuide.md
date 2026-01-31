@@ -450,3 +450,129 @@ All lit retro shaders support distance and height fog.
 | `height_fog_bottom` | Y position of maximum fog |
 | `height_fog_top` | Y position of no fog |
 | `height_fog_density` | Maximum fog density (0-1) |
+
+---
+
+## Retro HUD System (Phase 5)
+
+Clean, readable HUD that's exempt from retro post-processing effects.
+
+### Features
+
+- **Ring Counter** with animated spinning ring icon
+- **Score Display** (8-digit)
+- **Timer** with centisecond precision
+- **Lives Counter**
+- Warning flash when rings hit zero
+
+### Usage
+
+```gdscript
+# Add RetroHUD to your scene
+var hud = preload("res://addons/xtreme_level_editor/ui/retro_hud/retro_hud.tscn").instantiate()
+add_child(hud)
+
+# Update values
+hud.rings = 50
+hud.add_rings(10)
+hud.add_score(1000)
+hud.lives = 3
+
+# Timer control
+hud.start_timer()
+hud.stop_timer()
+hud.reset_timer()
+```
+
+---
+
+## Screen Effects System (Phase 7)
+
+Transitions, flashes, and overlays for game events.
+
+### Effects Available
+
+| Effect | Description | Method |
+|--------|-------------|--------|
+| Flash | Screen flash (damage, collect) | `flash(color, duration)` |
+| Fade | Fade to/from color | `fade_transition(duration, color)` |
+| Iris Wipe | Circle in/out | `iris_transition(duration, color, center)` |
+| Horizontal Wipe | Side-to-side | `horizontal_wipe(duration, color)` |
+| Vertical Wipe | Top-to-bottom | `vertical_wipe(duration, color)` |
+| Pixelate | Retro pixelation | `pixelate_transition(duration, color)` |
+
+### Usage
+
+```gdscript
+# Add ScreenEffectsManager to scene
+var fx = ScreenEffectsManager.new()
+add_child(fx)
+
+# Quick flashes
+fx.flash_damage()      # Red flash
+fx.flash_ring_collect() # Yellow flash
+fx.flash_white()       # White flash
+
+# Transitions (emit signals at midpoint)
+fx.iris_transition(1.5)
+fx.await transition_midpoint
+# Load new scene here
+fx.await transition_finished
+
+# Speed blur for fast movement
+fx.set_speed_blur(0.5, player.velocity.angle())
+fx.clear_speed_blur()
+```
+
+---
+
+## Retro Particles (Phase 7)
+
+Particle effects matching the PS1/Saturn aesthetic.
+
+### Available Prefabs
+
+| Prefab | Use Case |
+|--------|----------|
+| `ring_sparkle.tscn` | Ring collection |
+| `dust_puff.tscn` | Landing, skidding |
+| `speed_lines.tscn` | High-speed movement |
+
+### Usage
+
+```gdscript
+# Spawn particles
+var sparkle = preload("res://addons/.../ring_sparkle.tscn").instantiate()
+sparkle.global_position = ring_position
+get_tree().root.add_child(sparkle)
+sparkle.emitting = true
+
+# Speed lines (attach to player)
+var lines = preload("res://addons/.../speed_lines.tscn").instantiate()
+player.add_child(lines)
+lines.emitting = player_speed > threshold
+```
+
+---
+
+## Editor Integration (Phase 6)
+
+Preview retro effects while editing levels.
+
+### RetroEditorPreview Plugin
+
+The plugin adds a "Retro Preview" button to the 3D editor toolbar:
+
+- **Toggle** retro effects on/off in editor
+- **Intensity slider** (0-100%)
+- **Quick presets**: Modern, Light, Balanced, Authentic
+- **Toggle** individual effects (jitter, fog)
+
+### Enabling Editor Preview
+
+The RetroEditorPreview is part of the XtremeLevelEditor plugin. When enabled:
+
+1. Click "Retro Preview" in the 3D toolbar
+2. Adjust intensity with the slider
+3. Toggle effects as needed
+4. All changes preview in real-time

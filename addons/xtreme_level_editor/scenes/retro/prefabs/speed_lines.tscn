@@ -1,0 +1,44 @@
+[gd_scene load_steps=5 format=3 uid="uid://speed_lines_particles"]
+
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_particle.gdshader" id="1_shader"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_speed"]
+shader = ExtResource("1_shader")
+shader_parameter/albedo = Color(1, 1, 1, 0.6)
+shader_parameter/use_texture = false
+shader_parameter/billboard_enabled = false
+shader_parameter/y_billboard = false
+shader_parameter/retro_color_enabled = false
+shader_parameter/pulse_enabled = false
+
+[sub_resource type="BoxMesh" id="BoxMesh_line"]
+size = Vector3(0.05, 0.05, 1.0)
+
+[sub_resource type="Gradient" id="Gradient_color"]
+offsets = PackedFloat32Array(0, 0.2, 1)
+colors = PackedColorArray(1, 1, 1, 0, 1, 1, 1, 0.8, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_color"]
+gradient = SubResource("Gradient_color")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_speed"]
+lifetime_randomness = 0.3
+emission_shape = 2
+emission_box_extents = Vector3(3, 2, 0.5)
+direction = Vector3(0, 0, 1)
+spread = 5.0
+initial_velocity_min = 30.0
+initial_velocity_max = 50.0
+gravity = Vector3(0, 0, 0)
+scale_min = 0.5
+scale_max = 2.0
+color_ramp = SubResource("GradientTexture1D_color")
+
+[node name="SpeedLines" type="GPUParticles3D"]
+amount = 20
+lifetime = 0.3
+preprocess = 0.2
+visibility_aabb = AABB(-5, -3, -2, 10, 6, 10)
+local_coords = true
+process_material = SubResource("ParticleProcessMaterial_speed")
+draw_pass_1 = SubResource("BoxMesh_line")

@@ -1,0 +1,47 @@
+[gd_scene load_steps=6 format=3 uid="uid://ring_sparkle_particles"]
+
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_particle.gdshader" id="1_shader"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_sparkle"]
+shader = ExtResource("1_shader")
+shader_parameter/albedo = Color(1, 1, 0.8, 1)
+shader_parameter/use_texture = false
+shader_parameter/billboard_enabled = true
+shader_parameter/y_billboard = false
+shader_parameter/retro_color_enabled = true
+shader_parameter/color_bits = 5.0
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 4.0
+shader_parameter/pulse_intensity = 0.3
+
+[sub_resource type="QuadMesh" id="QuadMesh_particle"]
+size = Vector2(0.2, 0.2)
+
+[sub_resource type="Gradient" id="Gradient_color"]
+offsets = PackedFloat32Array(0, 0.5, 1)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 0.5, 1, 1, 1, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_color"]
+gradient = SubResource("Gradient_color")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_sparkle"]
+lifetime_randomness = 0.3
+emission_shape = 1
+emission_sphere_radius = 0.5
+direction = Vector3(0, 1, 0)
+spread = 180.0
+initial_velocity_min = 2.0
+initial_velocity_max = 5.0
+gravity = Vector3(0, -2, 0)
+scale_min = 0.5
+scale_max = 1.5
+color_ramp = SubResource("GradientTexture1D_color")
+
+[node name="RingSparkle" type="GPUParticles3D"]
+emitting = false
+amount = 8
+lifetime = 0.4
+one_shot = true
+explosiveness = 0.9
+process_material = SubResource("ParticleProcessMaterial_sparkle")
+draw_pass_1 = SubResource("QuadMesh_particle")

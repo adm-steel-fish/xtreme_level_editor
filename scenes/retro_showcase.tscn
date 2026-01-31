@@ -1,0 +1,327 @@
+[gd_scene load_steps=25 format=3 uid="uid://retro_showcase_scene"]
+
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_standard.gdshader" id="1_retro_standard"]
+[ext_resource type="Shader" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="2_retro_unlit"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/retro_light_manager.gd" id="3_light_manager"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/parallax_background_3d.gd" id="4_parallax_bg"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/parallax_layer_3d.gd" id="5_parallax_layer"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/ui/retro_hud/retro_hud.gd" id="6_retro_hud"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/screen_effects_manager.gd" id="7_screen_effects"]
+[ext_resource type="Script" path="res://scripts/test_camera_controller.gd" id="8_camera_controller"]
+[ext_resource type="Script" path="res://scripts/test_currency.gd" id="9_currency"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.15, 0.1, 0.35, 1)
+sky_horizon_color = Color(0.4, 0.25, 0.5, 1)
+ground_bottom_color = Color(0.08, 0.05, 0.12, 1)
+ground_horizon_color = Color(0.25, 0.15, 0.3, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+ambient_light_source = 2
+ambient_light_color = Color(0.25, 0.2, 0.35, 1)
+fog_enabled = true
+fog_light_color = Color(0.2, 0.15, 0.3, 1)
+fog_density = 0.008
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_floor"]
+shader = ExtResource("1_retro_standard")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/lighting_enabled = true
+shader_parameter/light_direction = Vector3(0.3, -0.7, -0.5)
+shader_parameter/light_color = Vector3(1, 0.95, 0.9)
+shader_parameter/light_intensity = 1.0
+shader_parameter/ambient_color = Vector3(0.25, 0.2, 0.35)
+shader_parameter/ambient_intensity = 0.4
+shader_parameter/use_half_lambert = true
+shader_parameter/fog_enabled = true
+shader_parameter/fog_color = Vector3(0.2, 0.15, 0.3)
+shader_parameter/fog_start = 30.0
+shader_parameter/fog_end = 120.0
+shader_parameter/albedo = Color(0.25, 0.4, 0.55, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+size = Vector3(150, 0.5, 150)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_platform"]
+shader = ExtResource("1_retro_standard")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/lighting_enabled = true
+shader_parameter/light_direction = Vector3(0.3, -0.7, -0.5)
+shader_parameter/fog_enabled = true
+shader_parameter/fog_color = Vector3(0.2, 0.15, 0.3)
+shader_parameter/fog_start = 30.0
+shader_parameter/fog_end = 120.0
+shader_parameter/albedo = Color(0.5, 0.35, 0.55, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_platform"]
+size = Vector3(4, 0.5, 4)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ring"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/albedo = Color(1, 0.85, 0, 1)
+shader_parameter/brightness = 1.2
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 3.0
+shader_parameter/pulse_intensity = 0.15
+shader_parameter/rim_enabled = true
+shader_parameter/rim_intensity = 0.3
+shader_parameter/fade_alpha = 1.0
+
+[sub_resource type="TorusMesh" id="TorusMesh_ring"]
+inner_radius = 0.15
+outer_radius = 0.4
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_ring"]
+height = 0.3
+radius = 0.4
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_star"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = false
+shader_parameter/albedo = Color(1, 1, 0.9, 1)
+shader_parameter/brightness = 1.5
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 2.0
+shader_parameter/pulse_intensity = 0.4
+
+[sub_resource type="SphereMesh" id="SphereMesh_star"]
+radius = 0.25
+height = 0.5
+radial_segments = 8
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_bg"]
+shader = ExtResource("2_retro_unlit")
+shader_parameter/retro_enabled = false
+shader_parameter/albedo = Color(0.35, 0.25, 0.5, 1)
+shader_parameter/brightness = 1.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_bg"]
+size = Vector3(6, 15, 1)
+
+[sub_resource type="GDScript" id="GDScript_showcase"]
+script/source = "extends Node3D
+
+@onready var hud: RetroHUD = $RetroHUD
+@onready var screen_fx: ScreenEffectsManager = $ScreenEffectsManager
+
+var _rings_collected: int = 0
+
+func _ready() -> void:
+	# Connect ring collection
+	for ring in get_tree().get_nodes_in_group(\"currency\"):
+		if ring.has_signal(\"collected\"):
+			ring.collected.connect(_on_ring_collected)
+	
+	# Start timer
+	hud.start_timer()
+
+func _on_ring_collected(_ring: Node) -> void:
+	_rings_collected += 1
+	hud.add_rings(1)
+	hud.add_score(100)
+	screen_fx.flash_ring_collect()
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed:
+		match event.keycode:
+			KEY_1:
+				screen_fx.flash_damage()
+			KEY_2:
+				screen_fx.fade_transition(1.0)
+			KEY_3:
+				screen_fx.iris_transition(1.5)
+			KEY_4:
+				screen_fx.horizontal_wipe(1.0)
+			KEY_5:
+				screen_fx.pixelate_transition(1.5)
+			KEY_R:
+				# Reset scene
+				get_tree().reload_current_scene()
+"
+
+[node name="RetroShowcase" type="Node3D"]
+script = SubResource("GDScript_showcase")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 20, 0)
+light_color = Color(1, 0.95, 0.9, 1)
+light_energy = 0.4
+shadow_enabled = true
+
+[node name="RetroLightManager" type="Node3D" parent="."]
+script = ExtResource("3_light_manager")
+light_direction = Vector3(0.3, -0.7, -0.5)
+light_color = Color(1, 0.95, 0.9, 1)
+ambient_color = Color(0.25, 0.2, 0.35, 1)
+fog_enabled = true
+fog_color = Color(0.2, 0.15, 0.3, 1)
+fog_start = 30.0
+fog_end = 120.0
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.939693, 0.34202, 0, -0.34202, 0.939693, 0, 5, 15)
+
+[node name="CameraController" type="Node3D" parent="Camera3D"]
+script = ExtResource("8_camera_controller")
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+material_override = SubResource("ShaderMaterial_floor")
+mesh = SubResource("BoxMesh_floor")
+
+[node name="Platforms" type="Node3D" parent="."]
+
+[node name="Platform1" type="MeshInstance3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 1, -8)
+material_override = SubResource("ShaderMaterial_platform")
+mesh = SubResource("BoxMesh_platform")
+
+[node name="Platform2" type="MeshInstance3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -15)
+material_override = SubResource("ShaderMaterial_platform")
+mesh = SubResource("BoxMesh_platform")
+
+[node name="Platform3" type="MeshInstance3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1, -8)
+material_override = SubResource("ShaderMaterial_platform")
+mesh = SubResource("BoxMesh_platform")
+
+[node name="Rings" type="Node3D" parent="."]
+
+[node name="Ring1" type="Area3D" parent="Rings" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 1.5, 0)
+script = ExtResource("9_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring1"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring1"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring2" type="Area3D" parent="Rings" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.5, 0)
+script = ExtResource("9_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring2"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring2"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring3" type="Area3D" parent="Rings" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+script = ExtResource("9_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring3"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring3"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring4" type="Area3D" parent="Rings" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.5, 0)
+script = ExtResource("9_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring4"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring4"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="Ring5" type="Area3D" parent="Rings" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 1.5, 0)
+script = ExtResource("9_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Rings/Ring5"]
+material_override = SubResource("ShaderMaterial_ring")
+mesh = SubResource("TorusMesh_ring")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Rings/Ring5"]
+shape = SubResource("CylinderShape3D_ring")
+
+[node name="ParallaxBackground3D" type="Node3D" parent="."]
+script = ExtResource("4_parallax_bg")
+auto_find_camera = true
+
+[node name="SkyLayer" type="Node3D" parent="ParallaxBackground3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 40, -180)
+script = ExtResource("5_parallax_layer")
+parallax_factor = 0.05
+base_distance = 180.0
+
+[node name="Star1" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -40, 0, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star2" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 15, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star3" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 8, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="Star4" type="MeshInstance3D" parent="ParallaxBackground3D/SkyLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 20, 0)
+material_override = SubResource("ShaderMaterial_star")
+mesh = SubResource("SphereMesh_star")
+
+[node name="FarLayer" type="Node3D" parent="ParallaxBackground3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -120)
+script = ExtResource("5_parallax_layer")
+parallax_factor = 0.15
+base_distance = 120.0
+
+[node name="Building1" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -35, 7.5, 0)
+material_override = SubResource("ShaderMaterial_bg")
+mesh = SubResource("BoxMesh_bg")
+
+[node name="Building2" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 10, 0)
+material_override = SubResource("ShaderMaterial_bg")
+mesh = SubResource("BoxMesh_bg")
+
+[node name="Building3" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 6, 0)
+material_override = SubResource("ShaderMaterial_bg")
+mesh = SubResource("BoxMesh_bg")
+
+[node name="Building4" type="MeshInstance3D" parent="ParallaxBackground3D/FarLayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 8, 0)
+material_override = SubResource("ShaderMaterial_bg")
+mesh = SubResource("BoxMesh_bg")
+
+[node name="RetroHUD" type="CanvasLayer" parent="."]
+layer = 100
+script = ExtResource("6_retro_hud")
+
+[node name="ScreenEffectsManager" type="CanvasLayer" parent="."]
+layer = 99
+script = ExtResource("7_screen_effects")
+
+[node name="Instructions" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 5)
+text = "RETRO SYSTEM SHOWCASE
+WASD - Move Camera | Collect Rings for HUD demo
+1-5 - Test Screen Effects | R - Reset"
+font_size = 24
