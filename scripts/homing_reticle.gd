@@ -31,11 +31,15 @@ class_name HomingReticle
 var base_scale: Vector2
 var time: float = 0.0
 var _is_showing: bool = false
+var _main_group: Control
+var _counter_group: Control
 
 
 func _ready() -> void:
 	base_scale = scale
 	visible = false
+	_main_group = get_node_or_null("MainGroup") as Control
+	_counter_group = get_node_or_null("CounterGroup") as Control
 	_apply_color()
 
 
@@ -53,10 +57,19 @@ func _process(delta: float) -> void:
 	
 	# Rotation animation
 	if animate_rotation:
-		rotation_degrees += rotation_speed * delta
-		# Keep rotation in bounds to avoid float overflow after long play sessions
-		if rotation_degrees > 360.0:
-			rotation_degrees -= 360.0
+		if _main_group:
+			_main_group.rotation_degrees += rotation_speed * delta
+			if _main_group.rotation_degrees > 360.0:
+				_main_group.rotation_degrees -= 360.0
+		if _counter_group:
+			_counter_group.rotation_degrees += rotation_speed * delta
+			if _counter_group.rotation_degrees > 360.0:
+				_counter_group.rotation_degrees -= 360.0
+		if not _main_group and not _counter_group:
+			rotation_degrees += rotation_speed * delta
+			# Keep rotation in bounds to avoid float overflow after long play sessions
+			if rotation_degrees > 360.0:
+				rotation_degrees -= 360.0
 
 
 ## Call this to show the reticle with a pop-in effect
@@ -68,6 +81,10 @@ func show_reticle() -> void:
 	visible = true
 	time = 0.0
 	rotation_degrees = 0.0
+	if _main_group:
+		_main_group.rotation_degrees = 0.0
+	if _counter_group:
+		_counter_group.rotation_degrees = 180.0
 	
 	scale = base_scale * 0.5
 	var tween = create_tween()
@@ -86,16 +103,27 @@ func hide_reticle() -> void:
 	tween.tween_callback(func(): 
 		visible = false
 		scale = base_scale
+		if _main_group:
+			_main_group.rotation_degrees = 0.0
+		if _counter_group:
+			_counter_group.rotation_degrees = 180.0
 	)
 
 
 ## Apply tint color to texture rect children
 func _apply_color() -> void:
-	for child in get_children():
+	_apply_color_recursive(self)
+
+
+func _apply_color_recursive(node: Node) -> void:
+	for child in node.get_children():
 		if child is TextureRect:
 			child.modulate = reticle_color
 		elif child is Sprite2D:
 			child.modulate = reticle_color
+		elif child is ColorRect:
+			child.modulate = reticle_color
+		_apply_color_recursive(child)
 
 
 ## Set reticle color at runtime

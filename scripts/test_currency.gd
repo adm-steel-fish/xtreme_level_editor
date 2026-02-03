@@ -26,6 +26,7 @@ func _ready() -> void:
 	# IMPORTANT: Create a unique material for this ring instance
 	# This prevents all rings from fading when one is collected
 	_create_unique_material()
+	_orient_ring()
 
 
 func _create_unique_material() -> void:
@@ -88,8 +89,6 @@ func _create_standard_material(mesh: MeshInstance3D, original_mat: Material) -> 
 	if original_mat and original_mat is StandardMaterial3D:
 		# Duplicate the material so each ring has its own
 		_unique_material = original_mat.duplicate()
-		_is_shader_material = false
-		mesh.set_surface_override_material(0, _unique_material)
 	else:
 		# Create a default gold material if none exists
 		var mat = StandardMaterial3D.new()
@@ -100,8 +99,17 @@ func _create_standard_material(mesh: MeshInstance3D, original_mat: Material) -> 
 		mat.emission = Color(1.0, 0.85, 0.1, 1.0)
 		mat.emission_energy_multiplier = 0.2
 		_unique_material = mat
-		_is_shader_material = false
-		mesh.set_surface_override_material(0, _unique_material)
+	_is_shader_material = false
+	mesh.set_surface_override_material(0, _unique_material)
+
+
+func _orient_ring() -> void:
+	var mesh := get_node_or_null("MeshInstance3D") as MeshInstance3D
+	if mesh:
+		mesh.rotation_degrees.x = 90.0
+	var collision := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if collision:
+		collision.rotation_degrees.x = 90.0
 
 
 func _process(delta: float) -> void:

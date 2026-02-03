@@ -125,6 +125,8 @@ enum State {
 @export var roll_min_speed: float = 2.0
 ## Time before roll automatically stops (seconds)
 @export var roll_auto_stop_time: float = 3.0
+## Multiplier for roll attack duration (moving + CTRL)
+@export var roll_attack_duration_multiplier: float = 4.0
 #endregion
 
 #region Exported Variables - Homing Attack
@@ -265,6 +267,7 @@ var spin_dash_direction: Vector3 = Vector3.ZERO
 
 # Rolling
 var roll_timer: float = 0.0
+var roll_is_attack: bool = false
 
 # Homing attack
 var homing_target: Node3D = null
@@ -331,6 +334,9 @@ var floor_angle: float = 0.0
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
 var _cached_camera_right: Vector3 = Vector3.RIGHT
 
+# Internal: skip physics move for special movement
+var _skip_move_and_slide: bool = false
+
 # Wall hug minimum fall speed
 var wall_hug_min_fall_speed: float = 1.0
 #endregion
@@ -378,6 +384,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_skip_move_and_slide = false
 	_update_cached_camera_vectors()
 	_gather_input()
 	_update_grounded_status()
@@ -431,6 +438,10 @@ func _physics_process(delta: float) -> void:
 	
 	# Update homing reticle
 	_update_homing_reticle()
+	
+	if _skip_move_and_slide:
+		_update_facing_from_velocity(delta)
+		return
 	
 	# Apply movement
 	move_and_slide()
@@ -742,6 +753,7 @@ func _process_skidding(delta: float) -> void:
 	horizontal = horizontal.move_toward(Vector3.ZERO, skid_deceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_align_velocity_to_floor()
 	
 	# When stopped or nearly stopped, transition to moving in new direction
 	if horizontal.length() < 0.5:
@@ -817,7 +829,8 @@ func _process_rolling(delta: float) -> void:
 			return
 	
 	# Auto-stop after time limit
-	if roll_timer >= roll_auto_stop_time:
+	var auto_stop_time := roll_auto_stop_time * (roll_attack_duration_multiplier if roll_is_attack else 1.0)
+	if roll_timer >= auto_stop_time:
 		_change_state(State.IDLE if horizontal_velocity.length() < roll_min_speed else State.MOVING)
 		return
 	
@@ -994,6 +1007,9 @@ func _process_butt_bounce_rebounding(delta: float) -> void:
 		_on_land()
 		return
 	
+	# Allow air control during rebound
+	_apply_air_movement(delta)
+	
 	# Apply gravity during rebound
 	_apply_gravity(delta)
 	
@@ -1063,16 +1079,19 @@ func _process_light_dash(_delta: float) -> void:
 		_end_light_dash()
 		return
 	
-	var target = light_dash_path[light_dash_index]
+	var target: Node3D = light_dash_path[light_dash_index]
 	if not is_instance_valid(target):
 		_end_light_dash()
 		return
 	
-	var direction = (target.global_position - global_position).normalized()
-	velocity = direction * light_dash_speed
+	var target_pos: Vector3 = target.global_position
+	var prev_pos := global_position
+	global_position = global_position.move_toward(target_pos, light_dash_speed * _delta)
+	velocity = (global_position - prev_pos) / maxf(_delta, 0.001)
+	_skip_move_and_slide = true
 	
 	# Check if we've reached current target
-	if global_position.distance_to(target.global_position) < 1.0:
+	if global_position.distance_to(target_pos) < 0.5:
 		# Collect the currency (emit signal or call method on target)
 		if target.has_method("collect"):
 			target.collect()
@@ -1326,6 +1345,7 @@ func _apply_ground_movement(delta: float) -> void:
 	horizontal = horizontal.move_toward(target_velocity, ground_acceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_align_velocity_to_floor()
 
 
 ## Rotates the player model to face a given direction (for visual feedback)
@@ -1416,6 +1436,7 @@ func _apply_rolling_movement(delta: float) -> void:
 	
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_align_velocity_to_floor()
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
@@ -1451,6 +1472,19 @@ func _get_slope_direction() -> Vector3:
 	var gravity_dir = Vector3.DOWN
 	var projected = gravity_dir - floor_normal * gravity_dir.dot(floor_normal)
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+func _align_velocity_to_floor() -> void:
+	if not is_grounded or floor_angle <= 0.1:
+		return
+	var horizontal := Vector3(velocity.x, 0, velocity.z)
+	if horizontal.length() < 0.01:
+		return
+	var tangent := horizontal.slide(floor_normal)
+	if tangent.length() < 0.001:
+		return
+	tangent = tangent.normalized() * horizontal.length()
+	velocity = Vector3(tangent.x, tangent.y, tangent.z)
 #endregion
 
 
@@ -1476,6 +1510,7 @@ func _start_roll_attack() -> void:
 		velocity.x = horizontal.x
 		velocity.z = horizontal.z
 	
+	roll_is_attack = true
 	_change_state(State.ROLLING)
 
 
@@ -1485,6 +1520,7 @@ func _release_spin_dash() -> void:
 	var dash_speed = lerpf(spin_dash_min_speed, spin_dash_max_speed, charge_ratio)
 	
 	velocity = spin_dash_direction * dash_speed
+	roll_is_attack = false
 	_change_state(State.ROLLING)
 
 
@@ -1536,7 +1572,9 @@ func _on_homing_attack_hit() -> void:
 	
 	# Check if target is enemy (triggers powered bounce behavior)
 	if homing_target.is_in_group("enemies") or homing_target.is_in_group("targetable"):
-		# Bounce upward
+		# Bounce upward and reset horizontal momentum
+		velocity.x = 0.0
+		velocity.z = 0.0
 		velocity.y = butt_bounce_powered_rebound_velocity
 		
 		# Trigger shockwave if it was an enemy
@@ -1580,7 +1618,13 @@ func _update_homing_reticle() -> void:
 			if camera:
 				var screen_pos = camera.unproject_position(homing_target.global_position)
 				# FIX: Center the reticle on the target position
-				homing_reticle.global_position = screen_pos - homing_reticle.size / 2.0
+				var pivot = homing_reticle.pivot_offset
+				var scale = homing_reticle.scale
+				var scaled_pivot = Vector2(pivot.x * scale.x, pivot.y * scale.y)
+				homing_reticle.global_position = screen_pos - scaled_pivot
+			else:
+				var viewport_size := get_viewport().get_visible_rect().size
+				homing_reticle.global_position = viewport_size * 0.5 - homing_reticle.size / 2.0
 		else:
 			if homing_reticle.has_method("hide_reticle"):
 				homing_reticle.hide_reticle()
@@ -1614,7 +1658,7 @@ func _find_best_homing_target() -> Node3D:
 		var distance = to_target.length()
 		
 		# Range check
-		if distance > homing_range or distance < 0.5:  # Also ignore very close targets
+		if distance > homing_range:
 			continue
 		
 		# Score: prefer closer targets

@@ -1,16 +1,16 @@
 [gd_scene load_steps=19 format=3 uid="uid://cldvt7hyn7ouo"]
 
-[ext_resource type="Script" uid="uid://deesxc8icb0xi" path="res://scripts/homing_reticle.gd" id="2_reticle"]
+[ext_resource type="PackedScene" path="res://scenes/prefabs/homing_reticle.tscn" id="1_tmr53"]
 [ext_resource type="Script" uid="uid://bts68c4b8mgga" path="res://scripts/test_enemy.gd" id="4_enemy"]
 [ext_resource type="Script" uid="uid://bp1nmct7rcark" path="res://scripts/test_currency.gd" id="5_currency"]
 [ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="5_qcd3b"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="5_tmr53"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
-size = Vector3(60, 1, 60)
+size = Vector3(300, 1, 300)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
-size = Vector3(60, 1, 60)
+size = Vector3(300, 1, 300)
 
 [sub_resource type="StandardMaterial3D" id="Material_ground"]
 albedo_color = Color(0.35, 0.55, 0.35, 1)
@@ -67,37 +67,6 @@ shadow_bias = 0.03
 
 [node name="UI" type="CanvasLayer" parent="."]
 
-[node name="HomingReticle" type="Control" parent="UI"]
-visible = false
-layout_mode = 3
-anchors_preset = 0
-offset_right = 64.0
-offset_bottom = 64.0
-pivot_offset = Vector2(32, 32)
-script = ExtResource("2_reticle")
-
-[node name="ReticleOuter" type="ColorRect" parent="UI/HomingReticle"]
-layout_mode = 0
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(1, 0.3, 0.1, 0.8)
-
-[node name="ReticleInner" type="ColorRect" parent="UI/HomingReticle"]
-layout_mode = 0
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -16.0
-offset_top = -16.0
-offset_right = 16.0
-offset_bottom = 16.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(0, 0, 0, 0.5)
-
 [node name="DebugLabel" type="Label" parent="UI"]
 offset_left = 10.0
 offset_top = 10.0
@@ -113,6 +82,8 @@ Controls:
   Ctrl (air) - Butt Bounce
 
 Yellow ball shows which way player is facing."
+
+[node name="HomingReticle" parent="UI" instance=ExtResource("1_tmr53")]
 
 [node name="Ground" type="StaticBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
@@ -200,7 +171,7 @@ surface_material_override/0 = SubResource("Material_ramp")
 
 [node name="Label3D" type="Label3D" parent="Ramps/Ramp30Deg"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-text = "30°"
+text = "30Â°"
 font_size = 48
 
 [node name="Ramp45Deg" type="StaticBody3D" parent="Ramps"]
@@ -215,7 +186,7 @@ surface_material_override/0 = SubResource("Material_ramp")
 
 [node name="Label3D" type="Label3D" parent="Ramps/Ramp45Deg"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-text = "45°"
+text = "45Â°"
 font_size = 48
 
 [node name="Ramp60Deg" type="StaticBody3D" parent="Ramps"]
@@ -230,7 +201,7 @@ surface_material_override/0 = SubResource("Material_ramp")
 
 [node name="Label3D" type="Label3D" parent="Ramps/Ramp60Deg"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-text = "60°"
+text = "60Â°"
 font_size = 48
 
 [node name="LongRamp" type="StaticBody3D" parent="Ramps"]
@@ -247,7 +218,7 @@ surface_material_override/0 = SubResource("Material_ramp")
 
 [node name="Label3D" type="Label3D" parent="Ramps/LongRamp"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-text = "20° Long"
+text = "20Â° Long"
 font_size = 48
 
 [node name="Enemies" type="Node3D" parent="."]
@@ -342,11 +313,621 @@ shape = SubResource("CylinderShape3D_currency")
 mesh = SubResource("TorusMesh_currency")
 surface_material_override/0 = SubResource("Material_currency")
 
-[node name="Player" parent="." node_paths=PackedStringArray("camera") instance=ExtResource("5_tmr53")]
+[node name="TrailCircle" type="Node3D" parent="Currency"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 25)
+[node name="CircleRing1" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 0)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing1"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing1"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing2" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.543, 0, 2.296)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing2"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing2"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing3" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.243, 0, 4.243)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing3"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing3"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing4" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.296, 0, 5.543)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing4"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing4"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing5" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing5"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing5"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing6" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.296, 0, 5.543)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing6"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing6"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing7" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.243, 0, 4.243)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing7"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing7"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing8" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.543, 0, 2.296)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing8"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing8"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing9" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, 0)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing9"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing9"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing10" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.543, 0, -2.296)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing10"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing10"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing11" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.243, 0, -4.243)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing11"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing11"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing12" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.296, 0, -5.543)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing12"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing12"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing13" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -6)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing13"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing13"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing14" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.296, 0, -5.543)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing14"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing14"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing15" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.243, 0, -4.243)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing15"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing15"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="CircleRing16" type="Area3D" parent="Currency/TrailCircle" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.543, 0, -2.296)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailCircle/CircleRing16"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailCircle/CircleRing16"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="TrailVerticalC" type="Node3D" parent="Currency"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 6, -20)
+[node name="VerticalCRing1" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.828, -2.828)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing1"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing1"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing2" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.748, -1.398)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing2"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing2"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing3" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.99, 0.285)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing3"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing3"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing4" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.511, 1.917)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing4"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing4"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing5" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.397, 3.202)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing5"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing5"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing6" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.85, 3.909)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing6"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing6"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing7" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, 3.909)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing7"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing7"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing8" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.397, 3.202)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing8"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing8"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing9" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.511, 1.917)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing9"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing9"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing10" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.99, 0.285)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing10"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing10"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing11" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.748, -1.398)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing11"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing11"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="VerticalCRing12" type="Area3D" parent="Currency/TrailVerticalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.828, -2.828)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailVerticalC/VerticalCRing12"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailVerticalC/VerticalCRing12"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="TrailHorizontalC" type="Node3D" parent="Currency"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 3, -20)
+[node name="HorizontalCRing1" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.657, 0, -5.657)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing1"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing1"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing2" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.283, 0, -7.295)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing2"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing2"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing3" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.483, 0, -7.985)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing3"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing3"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing4" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.38, 0, -7.638)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing4"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing4"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing5" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.934, 0, -6.297)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing5"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing5"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing6" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.846, 0, -4.139)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing6"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing6"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing7" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.869, 0, -1.442)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing7"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing7"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing8" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.869, 0, 1.442)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing8"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing8"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing9" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.846, 0, 4.139)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing9"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing9"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing10" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.934, 0, 6.297)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing10"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing10"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing11" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.38, 0, 7.638)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing11"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing11"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing12" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.483, 0, 7.985)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing12"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing12"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing13" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.283, 0, 7.295)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing13"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing13"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HorizontalCRing14" type="Area3D" parent="Currency/TrailHorizontalC" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.657, 0, 5.657)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHorizontalC/HorizontalCRing14"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHorizontalC/HorizontalCRing14"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="TrailHelix" type="Node3D" parent="Currency"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -35)
+[node name="HelixRing1" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 0)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing1"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing1"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing2" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.662, 0.471, 1.806)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing2"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing2"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing3" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.695, 0.941, 3.368)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing3"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing3"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing4" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.229, 1.412, 4.476)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing4"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing4"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing5" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.461, 1.882, 4.979)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing5"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing5"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing6" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.368, 2.353, 4.809)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing6"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing6"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing7" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.013, 2.824, 3.99)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing7"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing7"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing8" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.251, 3.294, 2.632)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing8"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing8"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing9" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.915, 3.765, 0.919)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing9"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing9"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing10" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.915, 4.235, -0.919)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing10"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing10"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing11" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.251, 4.706, -2.632)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing11"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing11"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing12" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.013, 5.176, -3.99)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing12"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing12"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing13" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.368, 5.647, -4.809)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing13"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing13"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing14" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.461, 6.118, -4.979)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing14"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing14"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing15" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.229, 6.588, -4.476)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing15"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing15"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing16" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.695, 7.059, -3.368)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing16"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing16"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing17" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.662, 7.529, -1.806)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing17"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing17"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="HelixRing18" type="Area3D" parent="Currency/TrailHelix" groups=["currency"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 8, 0)
+script = ExtResource("5_currency")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Currency/TrailHelix/HelixRing18"]
+shape = SubResource("CylinderShape3D_currency")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Currency/TrailHelix/HelixRing18"]
+mesh = SubResource("TorusMesh_currency")
+surface_material_override/0 = SubResource("Material_currency")
+[node name="Player" parent="." node_paths=PackedStringArray("camera", "homing_reticle") instance=ExtResource("5_tmr53")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.484045, 0.9, 4.4399285)
 camera = NodePath("../XtremeCamera")
+homing_reticle = NodePath("../UI/HomingReticle")
 
 [node name="XtremeCamera" type="Camera3D" parent="." node_paths=PackedStringArray("target")]
 script = ExtResource("5_qcd3b")
 target = NodePath("../Player")
 metadata/_custom_type_script = "uid://drgbbgnapxrpr"
+
