@@ -353,8 +353,13 @@ func _update_shader_centers() -> void:
 				mat.set_shader_parameter("curve_center", center_position)
 
 func _cache_curved_materials() -> void:
+	if not is_inside_tree():
+		return
 	_cached_materials.clear()
-	_find_curved_materials_recursive(get_tree().root)
+	var tree := get_tree()
+	if not tree or not tree.root:
+		return
+	_find_curved_materials_recursive(tree.root)
 	_materials_cached = true
 	
 	if debug_draw:

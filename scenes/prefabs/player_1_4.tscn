@@ -1,16 +1,44 @@
-[gd_scene load_steps=4 format=3 uid="uid://cima0a4x3ju1g"]
+[gd_scene load_steps=7 format=3 uid="uid://cima0a4x3ju1g"]
 
-[ext_resource type="Script" uid="uid://dpifywcy4yvjl" path="res://scripts/player.gd" id="1_p5ehy"]
+[ext_resource type="Script" uid="uid://bf743pu2fyarx" path="res://scripts/player_controller.gd" id="1_p5ehy"]
 
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_paw1w"]
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
+radius = 0.4
+height = 1.8
 
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_j6w7d"]
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
+radius = 0.4
+height = 1.8
 
-[node name="Player_1-4" type="CharacterBody3D"]
+[sub_resource type="StandardMaterial3D" id="Material_player"]
+albedo_color = Color(0.2, 0.6, 1, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_face"]
+radius = 0.2
+height = 0.4
+
+[sub_resource type="StandardMaterial3D" id="Material_face"]
+albedo_color = Color(1, 0.9, 0.1, 1)
+emission_enabled = true
+emission = Color(1, 0.9, 0.1, 1)
+emission_energy_multiplier = 0.8
+
+[node name="Player" type="CharacterBody3D" groups=["player"]]
 script = ExtResource("1_p5ehy")
+camera = NodePath("")
+homing_reticle = NodePath("../UI/HomingReticle")
+player_model = NodePath("PlayerModel")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-shape = SubResource("CapsuleShape3D_paw1w")
+shape = SubResource("CapsuleShape3D_player")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-mesh = SubResource("CapsuleMesh_j6w7d")
+[node name="PlayerModel" type="Node3D" parent="."]
+
+[node name="Body" type="MeshInstance3D" parent="PlayerModel"]
+mesh = SubResource("CapsuleMesh_player")
+surface_material_override/0 = SubResource("Material_player")
+
+[node name="FaceIndicator" type="MeshInstance3D" parent="PlayerModel"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -0.55)
+mesh = SubResource("SphereMesh_face")
+surface_material_override/0 = SubResource("Material_face")

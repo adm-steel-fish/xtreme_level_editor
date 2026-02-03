@@ -135,8 +135,9 @@ func _flash() -> void:
 		var std_mat = _material as StandardMaterial3D
 		var original = std_mat.albedo_color
 		std_mat.albedo_color = Color.WHITE
-		
-		await get_tree().create_timer(0.1).timeout
+		var tree := get_tree()
+		if tree:
+			await tree.create_timer(0.1).timeout
 		if is_instance_valid(self) and std_mat:
 			std_mat.albedo_color = original
 
@@ -146,5 +147,5 @@ func destroy() -> void:
 	
 	# Simple destroy effect - scale down and remove
 	var tween = create_tween()
-	tween.tween_property(self, "scale", Vector3.ZERO, 0.2)
+	tween.tween_property(self, "scale", Vector3.ONE * 0.001, 0.2)
 	tween.tween_callback(queue_free)

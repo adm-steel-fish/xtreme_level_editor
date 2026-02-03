@@ -1,8 +1,8 @@
 [gd_scene load_steps=310 format=4 uid="uid://cee8v88fgn7o5"]
 
-[ext_resource type="Shader" uid="uid://cxrv1fj62wpdw" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_nge4m"]
+[ext_resource type="Shader" uid="uid://ch7782h2w22r0" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_nge4m"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="2_sasgg"]
-[ext_resource type="Script" uid="uid://dvi07lrbohqv2" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_d07oo"]
+[ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="3_d07oo"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_xq4us"]
 render_priority = 0
@@ -2433,4 +2433,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.61074, 3, 88.59447)
 script = ExtResource("3_d07oo")
 target = NodePath("../Player_1-4")
 wall_fade_enabled = false
-metadata/_custom_type_script = "uid://dvi07lrbohqv2"
+metadata/_custom_type_script = "uid://drgbbgnapxrpr"
+

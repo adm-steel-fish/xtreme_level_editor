@@ -225,13 +225,17 @@ func return_to_world_map() -> void:
 func pause() -> void:
 	if state == GameState.PLAYING:
 		state = GameState.PAUSED
-		get_tree().paused = true
+		var tree := get_tree()
+		if tree:
+			tree.paused = true
 
 ## Resume game
 func resume() -> void:
 	if state == GameState.PAUSED:
 		state = GameState.PLAYING
-		get_tree().paused = false
+		var tree := get_tree()
+		if tree:
+			tree.paused = false
 
 ## Restart current level
 func restart_level() -> void:

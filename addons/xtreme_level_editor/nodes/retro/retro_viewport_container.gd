@@ -107,7 +107,9 @@ func _ready() -> void:
 	
 	# Connect to window resize
 	if not Engine.is_editor_hint():
-		get_tree().root.size_changed.connect(_on_window_resized)
+		var tree := get_tree()
+		if tree and tree.root:
+			tree.root.size_changed.connect(_on_window_resized)
 
 
 func _enter_tree() -> void:
@@ -128,7 +130,9 @@ func _setup_viewport() -> void:
 		_viewport.name = "GameplayViewport"
 		add_child(_viewport)
 		if Engine.is_editor_hint():
-			_viewport.owner = get_tree().edited_scene_root
+			var tree := get_tree()
+			if tree:
+				_viewport.owner = tree.edited_scene_root
 	
 	_update_viewport_settings()
 	_update_viewport_size()
@@ -175,10 +179,14 @@ func _update_viewport_settings() -> void:
 func _update_viewport_size() -> void:
 	if not _viewport:
 		return
+	if not is_inside_tree():
+		return
 	
 	# Get base size from window or default
-	if not Engine.is_editor_hint() and get_tree():
-		_base_size = get_tree().root.size
+	if not Engine.is_editor_hint():
+		var tree := get_tree()
+		if tree and tree.root:
+			_base_size = tree.root.size
 	
 	# Apply render scale
 	var scaled_size := Vector2i(
@@ -254,6 +262,11 @@ func set_editor_mode(enabled: bool) -> void:
 func capture_clean_screenshot() -> Image:
 	if not _viewport:
 		return null
+	if not is_inside_tree():
+		return null
+	var tree := get_tree()
+	if not tree:
+		return null
 	
 	# Store current settings
 	var was_enabled := post_process_enabled
@@ -265,8 +278,8 @@ func capture_clean_screenshot() -> Image:
 	_update_viewport_size()
 	
 	# Wait for render
-	await get_tree().process_frame
-	await get_tree().process_frame
+	await tree.process_frame
+	await tree.process_frame
 	
 	# Capture
 	var image := _viewport.get_texture().get_image()
@@ -283,8 +296,13 @@ func capture_clean_screenshot() -> Image:
 func capture_retro_screenshot() -> Image:
 	if not _viewport:
 		return null
+	if not is_inside_tree():
+		return null
+	var tree := get_tree()
+	if not tree:
+		return null
 	
 	# Wait for render
-	await get_tree().process_frame
+	await tree.process_frame
 	
 	return _viewport.get_texture().get_image()

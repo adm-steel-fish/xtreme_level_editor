@@ -149,8 +149,13 @@ func _process(_delta: float) -> void:
 ## ===== MATERIAL SCANNING =====
 
 func _scan_materials() -> void:
+	if not is_inside_tree():
+		return
+	var tree := get_tree()
+	if not tree or not tree.root:
+		return
 	_materials.clear()
-	_scan_node(get_tree().root)
+	_scan_node(tree.root)
 	_apply_all()
 
 
@@ -202,8 +207,13 @@ func _has_lighting_uniforms(mat: ShaderMaterial) -> bool:
 
 
 func _find_environment() -> void:
+	if not is_inside_tree():
+		return
+	var tree := get_tree()
+	if not tree or not tree.root:
+		return
 	# Find WorldEnvironment in scene
-	var world_env := _find_node_by_type(get_tree().root, "WorldEnvironment") as WorldEnvironment
+	var world_env := _find_node_by_type(tree.root, "WorldEnvironment") as WorldEnvironment
 	if world_env:
 		_environment = world_env.environment
 

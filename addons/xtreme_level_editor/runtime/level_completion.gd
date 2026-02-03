@@ -176,7 +176,11 @@ func _run_tally() -> void:
 		while _tally_current < _tally_target:
 			_tally_current = mini(_tally_current + int(tally_speed), _tally_target)
 			tally_progress.emit(category, _tally_current, _tally_target)
-			await get_tree().create_timer(tally_tick_interval).timeout
+			var tree := get_tree()
+			if tree:
+				await tree.create_timer(tally_tick_interval).timeout
+			else:
+				break
 	
 	_tallying = false
 	tally_completed.emit(_tally_results)

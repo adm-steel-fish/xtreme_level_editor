@@ -58,7 +58,9 @@ func _ready() -> void:
 	
 	if auto_update_shaders:
 		# Wait a frame for scene to be fully loaded
-		await get_tree().process_frame
+		var tree := get_tree()
+		if tree:
+			await tree.process_frame
 		_collect_shader_materials()
 	
 	_initialized = true
@@ -115,8 +117,13 @@ func _update_shader_parameters() -> void:
 			mat.set_shader_parameter("curve_center", center)
 
 func _collect_shader_materials() -> void:
+	if not is_inside_tree():
+		return
 	shader_materials.clear()
-	_find_curved_materials(get_tree().root)
+	var tree := get_tree()
+	if not tree or not tree.root:
+		return
+	_find_curved_materials(tree.root)
 	print("[XtremeCameraFixed] Found %d curved world materials" % shader_materials.size())
 
 func _find_curved_materials(node: Node) -> void:

@@ -80,14 +80,19 @@ func _cache_layers() -> void:
 
 
 func _find_camera() -> void:
+	if not is_inside_tree():
+		return
+	var tree := get_tree()
+	if not tree or not tree.root:
+		return
 	# Try to find XtremeCamera first
-	var xtreme_cam = _find_node_by_class(get_tree().root, "XtremeCamera")
+	var xtreme_cam = _find_node_by_class(tree.root, "XtremeCamera")
 	if xtreme_cam:
 		camera = xtreme_cam
 		return
 	
 	# Fall back to any Camera3D
-	var cam = _find_node_by_class(get_tree().root, "Camera3D")
+	var cam = _find_node_by_class(tree.root, "Camera3D")
 	if cam:
 		camera = cam
 

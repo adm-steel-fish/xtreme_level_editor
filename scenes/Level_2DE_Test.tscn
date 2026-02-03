@@ -1,6 +1,6 @@
 [gd_scene load_steps=279 format=4 uid="uid://cwkfwc2u0atct"]
 
-[ext_resource type="Shader" uid="uid://cxrv1fj62wpdw" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_mqcq1"]
+[ext_resource type="Shader" uid="uid://ch7782h2w22r0" path="res://addons/xtreme_level_editor/shaders/curved_world.gdshader" id="1_mqcq1"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_ph0qq"]
 render_priority = 0
@@ -2013,3 +2013,4 @@ shape = SubResource("BoxShape3D_6rbvp")
 [node name="Col_9_0_51" type="CollisionShape3D" parent="LevelCollision"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 103)
 shape = SubResource("BoxShape3D_7gfcc")
+

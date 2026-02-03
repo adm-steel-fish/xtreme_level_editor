@@ -131,12 +131,18 @@ enum State {
 @export_group("Homing Attack")
 ## Maximum distance to detect targets
 @export var homing_range: float = 20.0
-## Cone angle for target detection (degrees from camera forward)
-@export var homing_cone_angle: float = 45.0
 ## Speed of homing attack
 @export var homing_attack_speed: float = 30.0
 ## Maximum duration before homing attack cancels (seconds)
 @export var homing_attack_timeout: float = 1.0
+## Use an arcing path (Lost World style) instead of a straight line
+@export var homing_use_arc: bool = true
+## Peak height of the homing arc (world units)
+@export var homing_arc_height: float = 4.0
+## Minimum arc duration (seconds)
+@export var homing_arc_min_duration: float = 0.12
+## Maximum arc duration (seconds)
+@export var homing_arc_max_duration: float = 0.6
 #endregion
 
 #region Exported Variables - Butt Bounce
@@ -235,6 +241,8 @@ enum State {
 @export var homing_reticle: Control
 ## Reference to the player's visual mesh/model
 @export var player_model: Node3D
+## True if the model's forward is -Z (Godot default); false if forward is +Z
+@export var model_forward_is_negative_z: bool = true
 #endregion
 
 #region State Variables
@@ -261,6 +269,8 @@ var roll_timer: float = 0.0
 # Homing attack
 var homing_target: Node3D = null
 var homing_attack_timer: float = 0.0
+var homing_start_position: Vector3 = Vector3.ZERO
+var homing_attack_duration: float = 0.0
 
 # Butt bounce
 var consecutive_bounces: int = 0
@@ -424,6 +434,9 @@ func _physics_process(delta: float) -> void:
 	
 	# Apply movement
 	move_and_slide()
+	
+	# Keep model facing actual movement direction (unless path-controlled)
+	_update_facing_from_velocity(delta)
 
 
 #region Input Handling
@@ -594,6 +607,13 @@ func _enter_state(state: State) -> void:
 		State.HOMING_ATTACK:
 			homing_attack_timer = 0.0
 			homing_attack_started.emit(homing_target)
+			homing_start_position = global_position
+			if homing_target and is_instance_valid(homing_target):
+				var distance := homing_start_position.distance_to(homing_target.global_position)
+				if homing_attack_speed > 0.0:
+					homing_attack_duration = clampf(distance / homing_attack_speed, homing_arc_min_duration, homing_arc_max_duration)
+				else:
+					homing_attack_duration = homing_arc_min_duration
 		State.BUTT_BOUNCE_DESCENDING:
 			velocity.y = -butt_bounce_speed
 			velocity.x = 0
@@ -650,11 +670,8 @@ func _process_idle(delta: float) -> void:
 	# Check for Spin Dash charge - can start without direction (uses facing direction)
 	if action_just_pressed:
 		# Initialize spin dash direction to player's current facing
-		if player_model:
-			spin_dash_direction = -player_model.global_transform.basis.z
-			spin_dash_direction.y = 0
-			spin_dash_direction = spin_dash_direction.normalized()
-		else:
+		spin_dash_direction = _get_facing_direction()
+		if spin_dash_direction.length() < 0.1:
 			spin_dash_direction = _cached_camera_forward
 		_change_state(State.SPIN_DASH_CHARGE)
 		return
@@ -761,8 +778,7 @@ func _process_spin_dash_charge(delta: float) -> void:
 		spin_dash_direction = world_input_direction
 		# Also rotate player model to face the new direction
 		if player_model:
-			var target_rotation = atan2(spin_dash_direction.x, spin_dash_direction.z)
-			player_model.rotation.y = target_rotation
+			_rotate_player_model_to_direction(spin_dash_direction, delta)
 	
 	# Release to dash (in current spin_dash_direction, which may be facing direction or input direction)
 	if action_just_released:
@@ -919,16 +935,28 @@ func _process_homing_attack(delta: float) -> void:
 		return
 	
 	# Move toward target
-	var direction = (homing_target.global_position - global_position).normalized()
-	velocity = direction * homing_attack_speed
+	var target_pos := homing_target.global_position
+	var to_target := target_pos - global_position
+	if homing_use_arc:
+		var duration := maxf(homing_attack_duration, 0.01)
+		var t := clampf(homing_attack_timer / duration, 0.0, 1.0)
+		var arc_height := homing_arc_height * sin(PI * t)
+		var desired_pos := homing_start_position.lerp(target_pos, t) + Vector3.UP * arc_height
+		var desired_velocity := (desired_pos - global_position) / maxf(delta, 0.001)
+		var max_speed := homing_attack_speed * 2.0
+		if desired_velocity.length() > max_speed:
+			desired_velocity = desired_velocity.normalized() * max_speed
+		velocity = desired_velocity
+	else:
+		velocity = to_target.normalized() * homing_attack_speed
 	
 	# Check if we've reached the target (collision handled by signal from hitbox)
-	var distance = global_position.distance_to(homing_target.global_position)
+	var distance = global_position.distance_to(target_pos)
 	if distance < 1.0:
 		_on_homing_attack_hit()
 
 
-func _process_butt_bounce_descending(delta: float) -> void:
+func _process_butt_bounce_descending(_delta: float) -> void:
 	# Check for ground contact
 	if is_grounded:
 		_on_butt_bounce_land()
@@ -1030,7 +1058,7 @@ func _process_wall_jump(delta: float) -> void:
 
 
 #region State Processing - Special States
-func _process_light_dash(delta: float) -> void:
+func _process_light_dash(_delta: float) -> void:
 	if light_dash_path.is_empty() or light_dash_index >= light_dash_path.size():
 		_end_light_dash()
 		return
@@ -1085,7 +1113,7 @@ func _process_rail_grinding(delta: float) -> void:
 	if player_model:
 		var forward = rail_path_follow.global_transform.basis.z * rail_direction
 		if forward.length() > 0.01:
-			player_model.look_at(global_position + forward, Vector3.UP)
+			_rotate_player_model_to_direction(forward, delta)
 	
 	# Check if reached end of rail
 	if rail_path_follow.progress_ratio >= 1.0 or rail_path_follow.progress_ratio <= 0.0:
@@ -1108,7 +1136,7 @@ func _process_auto_path(delta: float) -> void:
 	if player_model:
 		var forward = auto_path_follow.global_transform.basis.z
 		if forward.length() > 0.01:
-			player_model.look_at(global_position + forward, Vector3.UP)
+			_rotate_player_model_to_direction(forward, delta)
 	
 	# Check if reached end of path
 	if auto_path_follow.progress_ratio >= 1.0:
@@ -1303,8 +1331,6 @@ func _apply_ground_movement(delta: float) -> void:
 ## Rotates the player model to face a given direction (for visual feedback)
 ## Call this with delta for frame-rate independent rotation
 func _rotate_player_model_to_direction(direction: Vector3, delta: float = 0.016, rotation_speed: float = 15.0) -> void:
-	if not player_model:
-		return
 	if direction.length() < 0.1:
 		return
 	
@@ -1312,9 +1338,52 @@ func _rotate_player_model_to_direction(direction: Vector3, delta: float = 0.016,
 	if flat_dir.length() < 0.1:
 		return
 	
-	var target_rotation = atan2(flat_dir.x, flat_dir.z)
-	# Frame-rate independent smooth rotation
-	player_model.rotation.y = lerp_angle(player_model.rotation.y, target_rotation, clampf(rotation_speed * delta, 0.0, 1.0))
+	var target_basis_body := Basis.looking_at(flat_dir, Vector3.UP)
+	var t := clampf(rotation_speed * delta, 0.0, 1.0)
+	
+	# Rotate body to match movement direction
+	var body_transform := global_transform
+	var body_scale := body_transform.basis.get_scale()
+	var body_current_rot := body_transform.basis.orthonormalized()
+	if absf(body_current_rot.determinant()) < 0.0001:
+		body_current_rot = Basis.IDENTITY
+	var body_new_rot := body_current_rot.slerp(target_basis_body, t)
+	body_transform.basis = body_new_rot.scaled(body_scale)
+	global_transform = body_transform
+	
+	# Rotate model (optionally flipped if forward is +Z)
+	if player_model:
+		var model_dir: Vector3 = flat_dir if model_forward_is_negative_z else -flat_dir
+		var target_basis_model := Basis.looking_at(model_dir, Vector3.UP)
+		var model_transform := player_model.global_transform
+		var model_scale := model_transform.basis.get_scale()
+		var model_current_rot := model_transform.basis.orthonormalized()
+		if absf(model_current_rot.determinant()) < 0.0001:
+			model_current_rot = Basis.IDENTITY
+		var model_new_rot := model_current_rot.slerp(target_basis_model, t)
+		model_transform.basis = model_new_rot.scaled(model_scale)
+		player_model.global_transform = model_transform
+
+func _update_facing_from_velocity(delta: float) -> void:
+	if current_state in [State.RAIL_GRINDING, State.AUTO_PATH]:
+		return
+	var horizontal := Vector3(velocity.x, 0, velocity.z)
+	if horizontal.length() < 0.1:
+		return
+	_rotate_player_model_to_direction(horizontal.normalized(), delta)
+
+
+func _get_facing_direction() -> Vector3:
+	var forward: Vector3
+	if player_model:
+		if model_forward_is_negative_z:
+			forward = -player_model.global_transform.basis.z
+		else:
+			forward = player_model.global_transform.basis.z
+	else:
+		forward = -global_transform.basis.z
+	forward.y = 0
+	return forward.normalized()
 
 
 func _apply_ground_friction(delta: float) -> void:
@@ -1520,14 +1589,15 @@ func _update_homing_reticle() -> void:
 
 
 func _find_best_homing_target() -> Node3D:
-	if not camera:
+	var tree := get_tree()
+	if not tree:
 		return null
 	
 	# PERFORMANCE: Early out if camera forward is invalid
 	if _cached_camera_forward.length_squared() < 0.001:
 		return null
 	
-	var targets = get_tree().get_nodes_in_group("targetable") + get_tree().get_nodes_in_group("enemies") + get_tree().get_nodes_in_group("rails")
+	var targets = tree.get_nodes_in_group("targetable") + tree.get_nodes_in_group("enemies") + tree.get_nodes_in_group("rails")
 	
 	# PERFORMANCE: Early out if no targets
 	if targets.is_empty():
@@ -1547,22 +1617,8 @@ func _find_best_homing_target() -> Node3D:
 		if distance > homing_range or distance < 0.5:  # Also ignore very close targets
 			continue
 		
-		# Cone check (based on camera forward)
-		var to_target_flat = Vector3(to_target.x, 0, to_target.z)
-		if to_target_flat.length_squared() < 0.001:
-			continue
-		to_target_flat = to_target_flat.normalized()
-		
-		var dot = _cached_camera_forward.dot(to_target_flat)
-		var angle = rad_to_deg(acos(clampf(dot, -1.0, 1.0)))
-		
-		if angle > homing_cone_angle:
-			continue
-		
-		# Score: prefer closer targets that are more centered
-		var distance_score = 1.0 - (distance / homing_range)
-		var angle_score = 1.0 - (angle / homing_cone_angle)
-		var score = distance_score * 0.6 + angle_score * 0.4
+		# Score: prefer closer targets
+		var score = 1.0 - (distance / homing_range)
 		
 		if score > best_score:
 			best_score = score
@@ -1630,7 +1686,10 @@ func _check_wall_hug() -> bool:
 
 #region Light Dash
 func _check_light_dash() -> bool:
-	var currencies = get_tree().get_nodes_in_group("currency")
+	var tree := get_tree()
+	if not tree:
+		return false
+	var currencies = tree.get_nodes_in_group("currency")
 	var nearest_currency: Node3D = null
 	var nearest_distance: float = light_dash_detection_range
 	
@@ -1656,7 +1715,10 @@ func _check_light_dash() -> bool:
 
 func _build_light_dash_path(start: Node3D) -> Array[Node3D]:
 	var path: Array[Node3D] = []
-	var currencies = get_tree().get_nodes_in_group("currency")
+	var tree := get_tree()
+	if not tree:
+		return path
+	var currencies = tree.get_nodes_in_group("currency")
 	
 	# Get player facing direction (use camera forward as fallback)
 	var facing = Vector3(velocity.x, 0, velocity.z).normalized()
@@ -1818,8 +1880,7 @@ func _exit_auto_path() -> void:
 	# Determine exit state based on environment
 	if current_state == State.AUTO_PATH:
 		# Give player a small forward velocity
-		if player_model:
-			velocity = -player_model.global_transform.basis.z * auto_path_speed * 0.3
+		velocity = _get_facing_direction() * auto_path_speed * 0.3
 		
 		if is_grounded:
 			if velocity.length() > 0.5:
@@ -1869,7 +1930,6 @@ func _is_submerged() -> bool:
 	# Calculate how much of the player is underwater
 	# Assuming player height of ~2 units, adjust as needed
 	var player_height = 2.0
-	var player_top = global_position.y + player_height * 0.5
 	var depth = water_surface_y - global_position.y
 	var submersion_ratio = clampf(depth / player_height, 0.0, 1.0)
 	
@@ -1902,7 +1962,7 @@ func _apply_swim_movement(delta: float) -> void:
 	velocity.z = horizontal.z
 
 
-func _track_spin_attack_input(delta: float) -> void:
+func _track_spin_attack_input(_delta: float) -> void:
 	# Clean up old inputs outside the time window
 	var current_time = Time.get_ticks_msec() / 1000.0
 	while swim_spin_input_history.size() > 0 and current_time - swim_spin_input_history[0] > swim_spin_attack_input_window:

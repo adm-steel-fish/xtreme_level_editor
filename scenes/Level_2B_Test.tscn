@@ -1,6 +1,6 @@
 [gd_scene load_steps=2278 format=4 uid="uid://ciuhjolnarfwy"]
 
-[ext_resource type="Script" uid="uid://dvi07lrbohqv2" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="1_tjuxs"]
+[ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="1_tjuxs"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="2_l54vm"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_tjuxs"]
@@ -15948,7 +15948,8 @@ shape = SubResource("BoxShape3D_ffbbn")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 44.317947, 3, 77.20843)
 script = ExtResource("1_tjuxs")
 target = NodePath("../Player_1-4")
-metadata/_custom_type_script = "uid://dvi07lrbohqv2"
+metadata/_custom_type_script = "uid://drgbbgnapxrpr"
 
 [node name="Player_1-4" parent="." instance=ExtResource("2_l54vm")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 44.317947, 3, 77.20843)
+

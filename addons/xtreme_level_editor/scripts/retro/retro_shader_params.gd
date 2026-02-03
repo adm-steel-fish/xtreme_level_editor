@@ -145,8 +145,11 @@ func _ready() -> void:
 
 func _initial_scan() -> void:
 	# Scan scene tree for existing retro materials
-	if get_tree():
-		_scan_node_for_materials(get_tree().root)
+	if not is_inside_tree():
+		return
+	var tree := get_tree()
+	if tree and tree.root:
+		_scan_node_for_materials(tree.root)
 
 
 ## ===== PUBLIC API =====

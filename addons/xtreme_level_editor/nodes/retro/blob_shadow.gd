@@ -75,7 +75,9 @@ func _setup_mesh() -> void:
 		add_child(_mesh_instance)
 		
 		if Engine.is_editor_hint():
-			_mesh_instance.owner = get_tree().edited_scene_root
+			var tree := get_tree()
+			if tree:
+				_mesh_instance.owner = tree.edited_scene_root
 	
 	# Create quad mesh
 	var quad := QuadMesh.new()
