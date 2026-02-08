@@ -87,6 +87,8 @@ enum State {
 @export var slope_deceleration_factor: float = 20.0
 ## Floor snap length while grounded (smaller values reduce ramp sticking)
 @export var floor_snap_length_ground: float = 0.05
+## Time to disable floor snapping right after leaving a ramp (seconds)
+@export var ramp_detach_snap_disable_time: float = 0.12
 ## Minimum slope angle that can produce a ramp launch (degrees)
 @export var ramp_launch_min_angle: float = 8.0
 ## Multiplier for preserved ramp launch speed
@@ -338,7 +340,8 @@ var action_just_released: bool = false
 var floor_normal: Vector3 = Vector3.UP
 var floor_angle: float = 0.0
 var _last_floor_normal: Vector3 = Vector3.UP
-var _last_ground_horizontal_velocity: Vector3 = Vector3.ZERO
+var _last_floor_tangent_velocity: Vector3 = Vector3.ZERO
+var _ramp_detach_timer: float = 0.0
 
 # PERFORMANCE: Cached camera vectors (updated once per frame)
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
@@ -399,6 +402,7 @@ func _physics_process(delta: float) -> void:
 	_gather_input()
 	_update_grounded_status()
 	_update_timers(delta)
+	_update_floor_snap_state()
 	_update_invincibility(delta)
 	
 	# Process current state
@@ -518,7 +522,6 @@ func _update_grounded_status() -> void:
 		floor_normal = get_floor_normal()
 		floor_angle = rad_to_deg(acos(clampf(floor_normal.dot(Vector3.UP), -1.0, 1.0)))
 		_last_floor_normal = floor_normal
-		_last_ground_horizontal_velocity = Vector3(velocity.x, 0, velocity.z)
 		coyote_timer = coyote_time
 		
 		# Reset air jump when landing
@@ -538,6 +541,9 @@ func _update_grounded_status() -> void:
 
 
 func _update_timers(delta: float) -> void:
+	if _ramp_detach_timer > 0.0:
+		_ramp_detach_timer = maxf(_ramp_detach_timer - delta, 0.0)
+	
 	# Coyote time
 	if coyote_timer > 0:
 		coyote_timer -= delta
@@ -551,6 +557,17 @@ func _update_timers(delta: float) -> void:
 		wall_jump_air_jump_timer -= delta
 		if wall_jump_air_jump_timer <= 0:
 			air_jump_available = true
+
+
+func _update_floor_snap_state() -> void:
+	if _ramp_detach_timer > 0.0:
+		floor_snap_length = 0.0
+		return
+	
+	if is_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
+		floor_snap_length = floor_snap_length_ground
+	else:
+		floor_snap_length = 0.0
 
 
 func _update_invincibility(delta: float) -> void:
@@ -769,6 +786,7 @@ func _process_skidding(delta: float) -> void:
 	horizontal = horizontal.move_toward(Vector3.ZERO, skid_deceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_conform_ground_velocity_to_floor()
 	
 	# When stopped or nearly stopped, transition to moving in new direction
 	if horizontal.length() < 0.5:
@@ -1335,31 +1353,20 @@ func _apply_ground_movement(delta: float) -> void:
 	var target_velocity = Vector3.ZERO
 	
 	if world_input_direction.length() > 0.1:
-		# Calculate target velocity with separate horizontal/depth speeds
-		var input_horizontal = Vector3(world_input_direction.x, 0, 0)
-		var input_depth = Vector3(0, 0, world_input_direction.z)
-		
-		target_velocity = input_horizontal.normalized() * max_speed_horizontal * abs(world_input_direction.x)
-		target_velocity += input_depth.normalized() * max_speed_depth * abs(world_input_direction.z)
+		# Align movement to the floor plane so ramp controls stay intuitive.
+		var aligned_input := _get_floor_aligned_direction(world_input_direction)
+		var target_speed := maxf(max_speed_horizontal, max_speed_depth)
+		target_velocity = aligned_input * target_speed
 		
 		# Rotate player model to face movement direction
-		_rotate_player_model_to_direction(world_input_direction, delta)
-	
-	# Apply slope influence
-	if floor_angle > 1.0:
-		var slope_direction = _get_slope_direction()
-		var movement_dot = Vector3(velocity.x, 0, velocity.z).normalized().dot(slope_direction)
-		
-		if movement_dot > 0.1:  # Moving downhill
-			target_velocity += slope_direction * slope_acceleration_factor
-		elif movement_dot < -0.1:  # Moving uphill
-			target_velocity -= slope_direction * slope_deceleration_factor
+		_rotate_player_model_to_direction(aligned_input, delta)
 	
 	# Smoothly accelerate toward target
 	var horizontal = Vector3(velocity.x, 0, velocity.z)
 	horizontal = horizontal.move_toward(target_velocity, ground_acceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_conform_ground_velocity_to_floor()
 
 
 ## Rotates the player model to face a given direction (for visual feedback)
@@ -1430,26 +1437,26 @@ func _apply_ground_friction(delta: float) -> void:
 func _apply_rolling_movement(delta: float) -> void:
 	var horizontal = Vector3(velocity.x, 0, velocity.z)
 	
-	# Apply slope influence (stronger while rolling)
+	# Rolling gets physical downhill pull from the slope.
 	if floor_angle > 1.0:
 		var slope_direction = _get_slope_direction()
-		var movement_dot = horizontal.normalized().dot(slope_direction)
-		
-		if movement_dot > 0.1:  # Rolling downhill - accelerate
-			horizontal += slope_direction * slope_acceleration_factor * 1.5 * delta
-		elif movement_dot < -0.1:  # Rolling uphill - decelerate faster
-			horizontal = horizontal.move_toward(Vector3.ZERO, slope_deceleration_factor * 2.0 * delta)
+		var slope_direction_flat = Vector3(slope_direction.x, 0, slope_direction.z)
+		if slope_direction_flat.length() > 0.001:
+			slope_direction_flat = slope_direction_flat.normalized()
+			horizontal += slope_direction_flat * slope_acceleration_factor * delta
 	
 	# Apply rolling friction (less than walking friction)
 	horizontal = horizontal.move_toward(Vector3.ZERO, roll_deceleration * delta)
 	
 	# Allow slight directional influence
 	if world_input_direction.length() > 0.1:
-		var influence = world_input_direction * ground_acceleration * 0.3 * delta
+		var aligned_input := _get_floor_aligned_direction(world_input_direction)
+		var influence = aligned_input * ground_acceleration * 0.3 * delta
 		horizontal += Vector3(influence.x, 0, influence.z)
 	
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+	_conform_ground_velocity_to_floor()
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
@@ -1487,25 +1494,56 @@ func _get_slope_direction() -> Vector3:
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
 
 
+func _get_floor_aligned_direction(direction: Vector3) -> Vector3:
+	if direction.length() < 0.001:
+		return Vector3.ZERO
+	
+	var aligned := direction
+	if is_grounded and floor_angle > 0.1:
+		aligned = direction.slide(floor_normal)
+	
+	var flat_aligned := Vector3(aligned.x, 0.0, aligned.z)
+	if flat_aligned.length() > 0.001:
+		return flat_aligned.normalized()
+	
+	var flat_fallback := Vector3(direction.x, 0.0, direction.z)
+	return flat_fallback.normalized() if flat_fallback.length() > 0.001 else Vector3.ZERO
+
+
+func _conform_ground_velocity_to_floor() -> void:
+	if not is_grounded or floor_angle <= 0.1:
+		return
+	
+	var horizontal = Vector3(velocity.x, 0, velocity.z)
+	if horizontal.length() < 0.01:
+		_last_floor_tangent_velocity = Vector3.ZERO
+		return
+	
+	var tangent = horizontal.slide(floor_normal)
+	if tangent.length() < 0.001:
+		return
+	
+	tangent = tangent.normalized() * horizontal.length()
+	_last_floor_tangent_velocity = tangent
+	velocity.x = tangent.x
+	velocity.z = tangent.z
+
+
 func _apply_ramp_launch_velocity() -> void:
 	var floor_dot := clampf(_last_floor_normal.dot(Vector3.UP), -1.0, 1.0)
 	var slope_angle := rad_to_deg(acos(floor_dot))
 	if slope_angle < ramp_launch_min_angle:
 		return
 	
-	var horizontal_speed := _last_ground_horizontal_velocity.length()
-	if horizontal_speed < 0.1:
+	if _last_floor_tangent_velocity.length() < 0.1:
 		return
 	
-	var tangent := _last_ground_horizontal_velocity.slide(_last_floor_normal)
-	if tangent.length() < 0.001:
-		return
-	
-	tangent = tangent.normalized() * horizontal_speed * ramp_launch_speed_multiplier
+	var tangent = _last_floor_tangent_velocity * ramp_launch_speed_multiplier
 	velocity.x = tangent.x
 	velocity.z = tangent.z
 	if tangent.y > velocity.y:
 		velocity.y = tangent.y
+	_ramp_detach_timer = ramp_detach_snap_disable_time
 #endregion
 
 
