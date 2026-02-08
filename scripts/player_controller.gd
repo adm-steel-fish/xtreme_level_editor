@@ -85,6 +85,12 @@ enum State {
 @export var slope_acceleration_factor: float = 15.0
 ## Slope deceleration factor (how much uphill slows you down)
 @export var slope_deceleration_factor: float = 20.0
+## Floor snap length while grounded (smaller values reduce ramp sticking)
+@export var floor_snap_length_ground: float = 0.05
+## Minimum slope angle that can produce a ramp launch (degrees)
+@export var ramp_launch_min_angle: float = 8.0
+## Multiplier for preserved ramp launch speed
+@export var ramp_launch_speed_multiplier: float = 1.0
 #endregion
 
 #region Exported Variables - Jumping
@@ -181,6 +187,8 @@ enum State {
 @export var light_dash_detection_range: float = 5.0
 ## Speed during light dash
 @export var light_dash_speed: float = 40.0
+## Maximum spacing between rings that can be linked in one trail
+@export var light_dash_link_distance: float = 5.5
 
 @export_group("Rail Grinding")
 ## Base speed on rails
@@ -329,6 +337,8 @@ var action_just_released: bool = false
 # Slope
 var floor_normal: Vector3 = Vector3.UP
 var floor_angle: float = 0.0
+var _last_floor_normal: Vector3 = Vector3.UP
+var _last_ground_horizontal_velocity: Vector3 = Vector3.ZERO
 
 # PERFORMANCE: Cached camera vectors (updated once per frame)
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
@@ -373,7 +383,7 @@ signal rings_lost(amount: int)
 func _ready() -> void:
 	# Set up floor detection
 	floor_max_angle = deg_to_rad(max_slope_angle)
-	floor_snap_length = 0.5
+	floor_snap_length = floor_snap_length_ground
 	
 	# Initialize state
 	_change_state(State.IDLE)
@@ -507,6 +517,8 @@ func _update_grounded_status() -> void:
 	if is_grounded:
 		floor_normal = get_floor_normal()
 		floor_angle = rad_to_deg(acos(clampf(floor_normal.dot(Vector3.UP), -1.0, 1.0)))
+		_last_floor_normal = floor_normal
+		_last_ground_horizontal_velocity = Vector3(velocity.x, 0, velocity.z)
 		coyote_timer = coyote_time
 		
 		# Reset air jump when landing
@@ -515,6 +527,10 @@ func _update_grounded_status() -> void:
 	else:
 		floor_normal = Vector3.UP
 		floor_angle = 0.0
+		
+		# Preserve tangent momentum only for ground-driven ramp exits (not jump launches)
+		if was_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
+			_apply_ramp_launch_velocity()
 		
 		# Coyote time - allow air jump briefly after leaving ground
 		if was_grounded and coyote_timer > 0:
@@ -753,7 +769,6 @@ func _process_skidding(delta: float) -> void:
 	horizontal = horizontal.move_toward(Vector3.ZERO, skid_deceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
-	_align_velocity_to_floor()
 	
 	# When stopped or nearly stopped, transition to moving in new direction
 	if horizontal.length() < 0.5:
@@ -1345,7 +1360,6 @@ func _apply_ground_movement(delta: float) -> void:
 	horizontal = horizontal.move_toward(target_velocity, ground_acceleration * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
-	_align_velocity_to_floor()
 
 
 ## Rotates the player model to face a given direction (for visual feedback)
@@ -1436,7 +1450,6 @@ func _apply_rolling_movement(delta: float) -> void:
 	
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
-	_align_velocity_to_floor()
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
@@ -1474,17 +1487,25 @@ func _get_slope_direction() -> Vector3:
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
 
 
-func _align_velocity_to_floor() -> void:
-	if not is_grounded or floor_angle <= 0.1:
+func _apply_ramp_launch_velocity() -> void:
+	var floor_dot := clampf(_last_floor_normal.dot(Vector3.UP), -1.0, 1.0)
+	var slope_angle := rad_to_deg(acos(floor_dot))
+	if slope_angle < ramp_launch_min_angle:
 		return
-	var horizontal := Vector3(velocity.x, 0, velocity.z)
-	if horizontal.length() < 0.01:
+	
+	var horizontal_speed := _last_ground_horizontal_velocity.length()
+	if horizontal_speed < 0.1:
 		return
-	var tangent := horizontal.slide(floor_normal)
+	
+	var tangent := _last_ground_horizontal_velocity.slide(_last_floor_normal)
 	if tangent.length() < 0.001:
 		return
-	tangent = tangent.normalized() * horizontal.length()
-	velocity = Vector3(tangent.x, tangent.y, tangent.z)
+	
+	tangent = tangent.normalized() * horizontal_speed * ramp_launch_speed_multiplier
+	velocity.x = tangent.x
+	velocity.z = tangent.z
+	if tangent.y > velocity.y:
+		velocity.y = tangent.y
 #endregion
 
 
@@ -1758,57 +1779,157 @@ func _check_light_dash() -> bool:
 
 
 func _build_light_dash_path(start: Node3D) -> Array[Node3D]:
-	var path: Array[Node3D] = []
+	var path: Array[Node3D] = [start]
 	var tree := get_tree()
 	if not tree:
 		return path
-	var currencies = tree.get_nodes_in_group("currency")
 	
-	# Get player facing direction (use camera forward as fallback)
-	var facing = Vector3(velocity.x, 0, velocity.z).normalized()
-	if facing.length() < 0.1 and camera:
-		facing = -camera.global_transform.basis.z
-		facing.y = 0
-		facing = facing.normalized()
+	var currencies: Array[Node3D] = []
+	for currency in tree.get_nodes_in_group("currency"):
+		if is_instance_valid(currency) and currency is Node3D:
+			currencies.append(currency as Node3D)
 	
-	# Start building path
-	var current = start
-	var visited: Array[Node3D] = []
+	var component: Array[Node3D] = _collect_light_dash_component(start, currencies, light_dash_link_distance)
+	if component.size() <= 1:
+		return path
 	
-	while current:
+	var adjacency: Dictionary = _build_light_dash_adjacency(component, light_dash_link_distance)
+	var start_id := start.get_instance_id()
+	var start_neighbors: Array[Node3D] = []
+	for neighbor in adjacency.get(start_id, []):
+		if is_instance_valid(neighbor) and neighbor is Node3D:
+			start_neighbors.append(neighbor as Node3D)
+	
+	var preferred_direction: Vector3 = _get_light_dash_preferred_direction()
+	var visited: Dictionary = {start_id: true}
+	var previous: Node3D = start
+	var current: Node3D = _choose_light_dash_neighbor(start, start_neighbors, preferred_direction)
+	
+	while current and is_instance_valid(current):
+		var current_id := current.get_instance_id()
+		if visited.has(current_id):
+			break
+		
 		path.append(current)
-		visited.append(current)
+		visited[current_id] = true
 		
-		# Find next currency in roughly the same direction
-		var best_next: Node3D = null
-		var best_score: float = -1.0
+		var next_candidates: Array[Node3D] = []
+		for candidate in adjacency.get(current_id, []):
+			if is_instance_valid(candidate) and candidate is Node3D:
+				next_candidates.append(candidate as Node3D)
 		
-		for currency in currencies:
-			if currency in visited:
-				continue
-			if not is_instance_valid(currency) or not currency is Node3D:
-				continue
-			
-			var to_currency = currency.global_position - current.global_position
-			var distance = to_currency.length()
-			
-			# Must be within reasonable chaining distance
-			if distance > light_dash_detection_range * 2:
-				continue
-			
-			# Prefer currencies in the facing direction
-			var direction = to_currency.normalized()
-			var dot = facing.dot(Vector3(direction.x, 0, direction.z).normalized())
-			
-			if dot > 0.3:  # Roughly forward
-				var score = dot / (1.0 + distance * 0.1)
-				if score > best_score:
-					best_score = score
-					best_next = currency
-		
-		current = best_next
+		var travel_direction := current.global_position - previous.global_position
+		var current_node := current
+		current = _choose_light_dash_neighbor(current_node, next_candidates, travel_direction, previous, visited)
+		previous = current_node
 	
 	return path
+
+
+func _collect_light_dash_component(start: Node3D, currencies: Array[Node3D], link_distance: float) -> Array[Node3D]:
+	var component: Array[Node3D] = []
+	var frontier: Array[Node3D] = [start]
+	var visited: Dictionary = {start.get_instance_id(): true}
+	
+	while not frontier.is_empty():
+		var current: Node3D = frontier.pop_back()
+		component.append(current)
+		
+		for currency in currencies:
+			var currency_id := currency.get_instance_id()
+			if visited.has(currency_id):
+				continue
+			
+			if current.global_position.distance_to(currency.global_position) <= link_distance:
+				visited[currency_id] = true
+				frontier.append(currency)
+	
+	return component
+
+
+func _build_light_dash_adjacency(component: Array[Node3D], link_distance: float) -> Dictionary:
+	var adjacency: Dictionary = {}
+	
+	for node in component:
+		var first_neighbor: Node3D = null
+		var second_neighbor: Node3D = null
+		var first_distance := INF
+		var second_distance := INF
+		
+		for other in component:
+			if other == node:
+				continue
+			
+			var distance := node.global_position.distance_to(other.global_position)
+			if distance > link_distance:
+				continue
+			
+			if distance < first_distance:
+				second_distance = first_distance
+				second_neighbor = first_neighbor
+				first_distance = distance
+				first_neighbor = other
+			elif distance < second_distance:
+				second_distance = distance
+				second_neighbor = other
+		
+		var neighbors: Array[Node3D] = []
+		if first_neighbor:
+			neighbors.append(first_neighbor)
+		if second_neighbor:
+			neighbors.append(second_neighbor)
+		
+		adjacency[node.get_instance_id()] = neighbors
+	
+	return adjacency
+
+
+func _get_light_dash_preferred_direction() -> Vector3:
+	var preferred := Vector3(velocity.x, 0, velocity.z)
+	if preferred.length() < 0.1 and world_input_direction.length() > 0.1:
+		preferred = world_input_direction
+	if preferred.length() < 0.1 and camera:
+		preferred = -camera.global_transform.basis.z
+		preferred.y = 0.0
+	
+	return preferred.normalized() if preferred.length() > 0.001 else Vector3.ZERO
+
+
+func _choose_light_dash_neighbor(
+	origin: Node3D,
+	candidates: Array[Node3D],
+	preferred_direction: Vector3,
+	avoid_node: Node3D = null,
+	visited: Dictionary = {}
+) -> Node3D:
+	var best_neighbor: Node3D = null
+	var best_score := -INF
+	var preferred: Vector3 = preferred_direction.normalized() if preferred_direction.length() > 0.001 else Vector3.ZERO
+	
+	for candidate in candidates:
+		if not candidate or not is_instance_valid(candidate):
+			continue
+		if candidate == avoid_node:
+			continue
+		
+		var candidate_id := candidate.get_instance_id()
+		if visited.has(candidate_id):
+			continue
+		
+		var to_candidate := candidate.global_position - origin.global_position
+		var distance := to_candidate.length()
+		if distance < 0.001 or distance > light_dash_link_distance:
+			continue
+		
+		var direction := to_candidate.normalized()
+		var alignment := preferred.dot(direction) if preferred.length() > 0.001 else 0.0
+		var score := alignment * 2.0 - distance * 0.15
+		
+		if score > best_score:
+			best_score = score
+			best_neighbor = candidate
+	
+	return best_neighbor
 
 
 func _end_light_dash() -> void:
