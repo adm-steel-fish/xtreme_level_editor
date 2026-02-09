@@ -3528,6 +3528,17 @@ func _auto_configure_spawn_tile(pos: Vector3i, tile_id: StringName) -> void:
 	_set_status("Spawn point added at world position: %s" % spawn.position)
 
 # ============ PHASE 4: Path Systems ============
+# Automated sequence design notes for future implementation:
+# 1) Auto-Trails
+#    - One-way scripted paths that move the player at constant speed.
+#    - Player cannot jump off during traversal.
+#    - Automatically jumps player off at the end of the path.
+#    - Editor preview can use rail-style line graphics; final in-level visuals can be replaced per theme.
+# 2) Roller Coasters
+#    - One-way scripted movement paths attached to solid level geometry.
+#    - Player cannot jump off during traversal.
+#    - Geometry should keep collision on non-ride sides so it behaves like real level architecture.
+#    - Automatically jumps player off at end of path.
 
 func _set_path_edit_mode(mode: int) -> void:
 	_path_edit_mode = mode

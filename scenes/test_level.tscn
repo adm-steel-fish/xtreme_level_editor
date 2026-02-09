@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://cldvt7hyn7ouo"]
+[gd_scene load_steps=25 format=3 uid="uid://cldvt7hyn7ouo"]
 
 [ext_resource type="PackedScene" path="res://scenes/prefabs/homing_reticle.tscn" id="1_tmr53"]
 [ext_resource type="Script" uid="uid://bts68c4b8mgga" path="res://scripts/test_enemy.gd" id="4_enemy"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="5_tmr53"]
 [ext_resource type="Script" uid="uid://dkpf5er5ervde" path="res://scripts/test_water_volume.gd" id="6_water"]
 [ext_resource type="Script" uid="uid://b3mjwleyu3d45" path="res://scripts/test_rail_course_builder.gd" id="7_railbuilder"]
+[ext_resource type="Script" path="res://scripts/test_auto_sequence_course_builder.gd" id="8_autoseq"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(300, 1, 300)
@@ -94,6 +95,7 @@ Controls:
   Ctrl (moving) - Roll Attack
   Ctrl (air) - Butt Bounce
   Rails - Jump into rail to grind, hold Ctrl to crouch accelerate
+  Auto Paths - Touch entry marker to ride, auto-jumps at end
   Swim - WASD steer, Space ascends, Ctrl descends
 
 Yellow ball shows which way player is facing."
@@ -6785,3 +6787,6 @@ surface_material_override/0 = SubResource("Material_water")
 [node name="RailCourse" type="Node3D" parent="WaterAndRails"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.4901886, 0, 2.4182816)
 script = ExtResource("7_railbuilder")
+
+[node name="AutoSequences" type="Node3D" parent="WaterAndRails"]
+script = ExtResource("8_autoseq")

@@ -227,6 +227,10 @@ enum State {
 @export_group("Auto Path")
 ## Speed along automatic path (can be overridden per-path)
 @export var auto_path_default_speed: float = 20.0
+## Horizontal carry speed multiplier when exiting an automatic path
+@export var auto_path_end_forward_speed_scale: float = 0.45
+## Minimum horizontal speed kept when exiting an automatic path
+@export var auto_path_end_min_forward_speed: float = 4.0
 
 @export_group("Swimming")
 ## Swim speed (horizontal movement)
@@ -340,6 +344,8 @@ var _rail_reattach_timer: float = 0.0
 var auto_path: Path3D = null
 var auto_path_follow: PathFollow3D = null
 var auto_path_speed: float = 0.0
+var auto_path_exit_jump_velocity: float = 0.0
+var auto_path_mount_height_offset: float = 0.0
 
 # Swimming
 var is_in_water: bool = false
@@ -651,8 +657,13 @@ func _exit_state(state: State) -> void:
 			rail_grind_ended.emit(old_rail)
 		State.AUTO_PATH:
 			var old_path = auto_path
+			if auto_path_follow and is_instance_valid(auto_path_follow):
+				auto_path_follow.queue_free()
 			auto_path = null
 			auto_path_follow = null
+			auto_path_speed = 0.0
+			auto_path_exit_jump_velocity = 0.0
+			auto_path_mount_height_offset = 0.0
 			auto_path_ended.emit(old_path)
 		State.SWIMMING_SPIN_ATTACK:
 			swim_spin_attack_timer = 0.0
@@ -1276,7 +1287,7 @@ func _process_rail_grinding(delta: float) -> void:
 
 func _process_auto_path(delta: float) -> void:
 	if not auto_path or not auto_path_follow:
-		_exit_auto_path()
+		_exit_auto_path(false)
 		return
 	
 	# No player input allowed during auto path
@@ -1284,17 +1295,32 @@ func _process_auto_path(delta: float) -> void:
 	auto_path_follow.progress += auto_path_speed * delta
 	
 	# Update player position
-	global_position = auto_path_follow.global_position
+	var auto_up := auto_path_follow.global_transform.basis.y
+	if auto_up.length() < 0.001:
+		auto_up = Vector3.UP
+	else:
+		auto_up = auto_up.normalized()
+	global_position = auto_path_follow.global_position + auto_up * auto_path_mount_height_offset
 	
 	# Rotate player to face path direction
 	if player_model:
-		var forward = auto_path_follow.global_transform.basis.z
+		var forward := _get_auto_path_forward_direction()
 		if forward.length() > 0.01:
 			_rotate_player_model_to_direction(forward, delta)
 	
 	# Check if reached end of path
 	if auto_path_follow.progress_ratio >= 1.0:
-		_exit_auto_path()
+		_exit_auto_path(true)
+
+
+func _get_auto_path_forward_direction() -> Vector3:
+	if not auto_path or not auto_path.curve or not auto_path_follow:
+		return _get_facing_direction()
+	var local_tangent := _sample_curve_tangent(auto_path.curve, auto_path_follow.progress)
+	if local_tangent.length() < 0.001:
+		return _get_facing_direction()
+	var world_tangent := (auto_path.global_transform.basis * local_tangent).normalized()
+	return world_tangent if world_tangent.length() > 0.001 else _get_facing_direction()
 #endregion
 
 
@@ -2350,12 +2376,20 @@ func _try_attach_to_nearby_rail() -> bool:
 
 #region Auto Path
 ## Call this to put the player on an automatic path sequence
-func start_auto_path(path: Path3D, speed: float = -1.0, start_from_beginning: bool = true) -> void:
+func start_auto_path(
+	path: Path3D,
+	speed: float = -1.0,
+	start_from_beginning: bool = true,
+	exit_jump_velocity: float = 0.0,
+	mount_height_offset: float = 0.0
+) -> void:
 	if not path:
 		return
 	
 	auto_path = path
 	auto_path_speed = speed if speed > 0 else auto_path_default_speed
+	auto_path_exit_jump_velocity = maxf(exit_jump_velocity, 0.0)
+	auto_path_mount_height_offset = mount_height_offset
 	
 	# Create PathFollow3D
 	auto_path_follow = PathFollow3D.new()
@@ -2376,15 +2410,28 @@ func start_auto_path(path: Path3D, speed: float = -1.0, start_from_beginning: bo
 	_change_state(State.AUTO_PATH)
 
 
-func _exit_auto_path() -> void:
+func _exit_auto_path(reached_end: bool = false) -> void:
+	var exit_forward := _get_auto_path_forward_direction()
+	var exit_horizontal := Vector3(exit_forward.x, 0.0, exit_forward.z)
+	if exit_horizontal.length() > 0.001:
+		exit_horizontal = exit_horizontal.normalized()
+	else:
+		exit_horizontal = Vector3.ZERO
+
 	if auto_path_follow:
 		auto_path_follow.queue_free()
 		auto_path_follow = null
 	
 	# Determine exit state based on environment
 	if current_state == State.AUTO_PATH:
-		# Give player a small forward velocity
-		velocity = _get_facing_direction() * auto_path_speed * 0.3
+		# Preserve forward carry speed when leaving scripted movement.
+		var carry_speed := maxf(absf(auto_path_speed) * auto_path_end_forward_speed_scale, auto_path_end_min_forward_speed)
+		velocity = exit_horizontal * carry_speed
+		if reached_end and auto_path_exit_jump_velocity > 0.0:
+			velocity.y = auto_path_exit_jump_velocity
+			air_jump_available = true
+			_change_state(State.AIRBORNE)
+			return
 		
 		if is_grounded:
 			if velocity.length() > 0.5:
@@ -2398,7 +2445,7 @@ func _exit_auto_path() -> void:
 
 ## Call this to force exit from auto path (e.g., player died)
 func force_exit_auto_path() -> void:
-	_exit_auto_path()
+	_exit_auto_path(false)
 #endregion
 
 
