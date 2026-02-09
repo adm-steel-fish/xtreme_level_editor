@@ -93,6 +93,8 @@ enum State {
 @export var ramp_launch_min_angle: float = 8.0
 ## Multiplier for preserved ramp launch speed
 @export var ramp_launch_speed_multiplier: float = 1.0
+## Minimum tangent speed needed to convert ramp momentum into launch velocity
+@export var ramp_launch_min_speed: float = 8.0
 #endregion
 
 #region Exported Variables - Jumping
@@ -522,6 +524,7 @@ func _update_grounded_status() -> void:
 		floor_normal = get_floor_normal()
 		floor_angle = rad_to_deg(acos(clampf(floor_normal.dot(Vector3.UP), -1.0, 1.0)))
 		_last_floor_normal = floor_normal
+		_last_floor_tangent_velocity = velocity.slide(floor_normal)
 		coyote_timer = coyote_time
 		
 		# Reset air jump when landing
@@ -1350,23 +1353,19 @@ func _process_hurt(delta: float) -> void:
 
 #region Movement Helpers
 func _apply_ground_movement(delta: float) -> void:
-	var target_velocity = Vector3.ZERO
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	var target_tangent := Vector3.ZERO
 	
 	if world_input_direction.length() > 0.1:
-		# Align movement to the floor plane so ramp controls stay intuitive.
 		var aligned_input := _get_floor_aligned_direction(world_input_direction)
 		var target_speed := maxf(max_speed_horizontal, max_speed_depth)
-		target_velocity = aligned_input * target_speed
-		
-		# Rotate player model to face movement direction
+		target_tangent = aligned_input * target_speed
+		tangent_velocity = tangent_velocity.move_toward(target_tangent, ground_acceleration * delta)
 		_rotate_player_model_to_direction(aligned_input, delta)
+	else:
+		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, ground_deceleration * delta)
 	
-	# Smoothly accelerate toward target
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
-	horizontal = horizontal.move_toward(target_velocity, ground_acceleration * delta)
-	velocity.x = horizontal.x
-	velocity.z = horizontal.z
-	_conform_ground_velocity_to_floor()
+	_set_floor_tangent_velocity(tangent_velocity)
 
 
 ## Rotates the player model to face a given direction (for visual feedback)
@@ -1428,35 +1427,27 @@ func _get_facing_direction() -> Vector3:
 
 
 func _apply_ground_friction(delta: float) -> void:
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
-	horizontal = horizontal.move_toward(Vector3.ZERO, ground_deceleration * delta)
-	velocity.x = horizontal.x
-	velocity.z = horizontal.z
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, ground_deceleration * delta)
+	_set_floor_tangent_velocity(tangent_velocity)
 
 
 func _apply_rolling_movement(delta: float) -> void:
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
 	
-	# Rolling gets physical downhill pull from the slope.
+	# Apply rolling friction first, then allow slope/input forces to add momentum.
+	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, roll_deceleration * delta)
+	
 	if floor_angle > 1.0:
-		var slope_direction = _get_slope_direction()
-		var slope_direction_flat = Vector3(slope_direction.x, 0, slope_direction.z)
-		if slope_direction_flat.length() > 0.001:
-			slope_direction_flat = slope_direction_flat.normalized()
-			horizontal += slope_direction_flat * slope_acceleration_factor * delta
+		var slope_direction := _get_slope_direction()
+		if slope_direction.length() > 0.001:
+			tangent_velocity += slope_direction * slope_acceleration_factor * delta
 	
-	# Apply rolling friction (less than walking friction)
-	horizontal = horizontal.move_toward(Vector3.ZERO, roll_deceleration * delta)
-	
-	# Allow slight directional influence
 	if world_input_direction.length() > 0.1:
 		var aligned_input := _get_floor_aligned_direction(world_input_direction)
-		var influence = aligned_input * ground_acceleration * 0.3 * delta
-		horizontal += Vector3(influence.x, 0, influence.z)
+		tangent_velocity += aligned_input * ground_acceleration * 0.35 * delta
 	
-	velocity.x = horizontal.x
-	velocity.z = horizontal.z
-	_conform_ground_velocity_to_floor()
+	_set_floor_tangent_velocity(tangent_velocity)
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
@@ -1498,35 +1489,71 @@ func _get_floor_aligned_direction(direction: Vector3) -> Vector3:
 	if direction.length() < 0.001:
 		return Vector3.ZERO
 	
-	var aligned := direction
+	if not is_grounded or floor_angle <= 0.1:
+		var flat_fallback := Vector3(direction.x, 0.0, direction.z)
+		return flat_fallback.normalized() if flat_fallback.length() > 0.001 else Vector3.ZERO
+	
+	# Build a floor-local input basis from camera vectors projected onto the ramp plane.
+	var floor_right := _cached_camera_right.slide(floor_normal)
+	if floor_right.length() < 0.001:
+		floor_right = floor_normal.cross(Vector3.FORWARD)
+	if floor_right.length() < 0.001:
+		floor_right = Vector3.RIGHT
+	floor_right = floor_right.normalized()
+	
+	var floor_forward := _cached_camera_forward.slide(floor_normal)
+	floor_forward -= floor_right * floor_forward.dot(floor_right)
+	if floor_forward.length() < 0.001:
+		floor_forward = floor_right.cross(floor_normal)
+	if floor_forward.length() < 0.001:
+		floor_forward = Vector3.FORWARD
+	floor_forward = floor_forward.normalized()
+	
+	var slope_input := floor_right * input_direction.x + floor_forward * -input_direction.y
+	if slope_input.length() > 0.001:
+		return slope_input.normalized()
+	
+	var projected := direction.slide(floor_normal)
+	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+func _get_floor_tangent_velocity(source_velocity: Vector3) -> Vector3:
 	if is_grounded and floor_angle > 0.1:
-		aligned = direction.slide(floor_normal)
-	
-	var flat_aligned := Vector3(aligned.x, 0.0, aligned.z)
-	if flat_aligned.length() > 0.001:
-		return flat_aligned.normalized()
-	
-	var flat_fallback := Vector3(direction.x, 0.0, direction.z)
-	return flat_fallback.normalized() if flat_fallback.length() > 0.001 else Vector3.ZERO
+		var tangent := source_velocity.slide(floor_normal)
+		return tangent if tangent.length() > 0.001 else Vector3.ZERO
+	return Vector3(source_velocity.x, 0.0, source_velocity.z)
+
+
+func _set_floor_tangent_velocity(tangent_velocity: Vector3) -> void:
+	if is_grounded and floor_angle > 0.1:
+		var tangent := tangent_velocity.slide(floor_normal)
+		_last_floor_tangent_velocity = tangent
+		velocity = tangent
+		
+		# Strip residual upward normal speed so crests release cleanly.
+		var normal_speed := velocity.dot(floor_normal)
+		if normal_speed > 0.0:
+			velocity -= floor_normal * normal_speed
+	else:
+		_last_floor_tangent_velocity = Vector3(tangent_velocity.x, 0.0, tangent_velocity.z)
+		velocity.x = tangent_velocity.x
+		velocity.z = tangent_velocity.z
 
 
 func _conform_ground_velocity_to_floor() -> void:
-	if not is_grounded or floor_angle <= 0.1:
+	if not is_grounded:
 		return
 	
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
-	if horizontal.length() < 0.01:
+	var tangent := _get_floor_tangent_velocity(velocity)
+	if tangent.length() < 0.01:
 		_last_floor_tangent_velocity = Vector3.ZERO
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if floor_angle > 0.1:
+			velocity.y = 0.0
 		return
 	
-	var tangent = horizontal.slide(floor_normal)
-	if tangent.length() < 0.001:
-		return
-	
-	tangent = tangent.normalized() * horizontal.length()
-	_last_floor_tangent_velocity = tangent
-	velocity.x = tangent.x
-	velocity.z = tangent.z
+	_set_floor_tangent_velocity(tangent)
 
 
 func _apply_ramp_launch_velocity() -> void:
@@ -1535,14 +1562,11 @@ func _apply_ramp_launch_velocity() -> void:
 	if slope_angle < ramp_launch_min_angle:
 		return
 	
-	if _last_floor_tangent_velocity.length() < 0.1:
+	if _last_floor_tangent_velocity.length() < ramp_launch_min_speed:
 		return
 	
-	var tangent = _last_floor_tangent_velocity * ramp_launch_speed_multiplier
-	velocity.x = tangent.x
-	velocity.z = tangent.z
-	if tangent.y > velocity.y:
-		velocity.y = tangent.y
+	var tangent := _last_floor_tangent_velocity * ramp_launch_speed_multiplier
+	velocity = tangent
 	_ramp_detach_timer = ramp_detach_snap_disable_time
 #endregion
 
