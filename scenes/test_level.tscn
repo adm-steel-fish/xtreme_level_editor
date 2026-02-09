@@ -1,10 +1,12 @@
-[gd_scene load_steps=19 format=3 uid="uid://cldvt7hyn7ouo"]
+[gd_scene load_steps=24 format=3 uid="uid://cldvt7hyn7ouo"]
 
 [ext_resource type="PackedScene" path="res://scenes/prefabs/homing_reticle.tscn" id="1_tmr53"]
 [ext_resource type="Script" uid="uid://bts68c4b8mgga" path="res://scripts/test_enemy.gd" id="4_enemy"]
 [ext_resource type="Script" uid="uid://bp1nmct7rcark" path="res://scripts/test_currency.gd" id="5_currency"]
 [ext_resource type="Script" uid="uid://drgbbgnapxrpr" path="res://addons/xtreme_level_editor/nodes/xtreme_camera.gd" id="5_qcd3b"]
 [ext_resource type="PackedScene" uid="uid://cima0a4x3ju1g" path="res://scenes/prefabs/player_1_4.tscn" id="5_tmr53"]
+[ext_resource type="Script" uid="uid://dkpf5er5ervde" path="res://scripts/test_water_volume.gd" id="6_water"]
+[ext_resource type="Script" uid="uid://b3mjwleyu3d45" path="res://scripts/test_rail_course_builder.gd" id="7_railbuilder"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(300, 1, 300)
@@ -56,6 +58,17 @@ emission_enabled = true
 emission = Color(1, 0.85, 0.1, 1)
 emission_energy_multiplier = 0.2
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_water"]
+size = Vector3(80, 6, 60)
+
+[sub_resource type="BoxMesh" id="BoxMesh_water"]
+size = Vector3(80, 6, 60)
+
+[sub_resource type="StandardMaterial3D" id="Material_water"]
+transparency = 1
+albedo_color = Color(0.17, 0.43, 0.8, 0.35)
+roughness = 0.08
+
 [node name="TestLevel" type="Node3D"]
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
@@ -80,6 +93,8 @@ Controls:
   Ctrl (idle) - Spin Dash (hold to charge, release to dash)
   Ctrl (moving) - Roll Attack
   Ctrl (air) - Butt Bounce
+  Rails - Jump into rail to grind, hold Ctrl to crouch accelerate
+  Swim - WASD steer, Space ascends, Ctrl descends
 
 Yellow ball shows which way player is facing."
 
@@ -124,6 +139,56 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 4, -5)
 shape = SubResource("BoxShape3D_platform")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform3"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
+[node name="Platform7" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 4, 36.702747)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform7"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform7"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
+[node name="Platform8" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 4, 50.486195)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform8"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform8"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
+[node name="Platform9" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.132225, 4, 50.486195)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform9"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform9"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
+[node name="Platform10" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.132225, 4, 37.277355)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform10"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform10"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
+[node name="Platform11" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.132225, 7.8618546, 44.2488)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform11"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform11"]
 mesh = SubResource("BoxMesh_platform")
 surface_material_override/0 = SubResource("Material_platform")
 
@@ -6703,3 +6768,20 @@ homing_reticle = NodePath("../UI/HomingReticle")
 script = ExtResource("5_qcd3b")
 target = NodePath("../Player")
 metadata/_custom_type_script = "uid://drgbbgnapxrpr"
+
+[node name="WaterAndRails" type="Node3D" parent="."]
+
+[node name="WaterBox" type="Area3D" parent="WaterAndRails"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -70, 3, 110)
+script = ExtResource("6_water")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WaterAndRails/WaterBox"]
+shape = SubResource("BoxShape3D_water")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WaterAndRails/WaterBox"]
+mesh = SubResource("BoxMesh_water")
+surface_material_override/0 = SubResource("Material_water")
+
+[node name="RailCourse" type="Node3D" parent="WaterAndRails"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.4901886, 0, 2.4182816)
+script = ExtResource("7_railbuilder")

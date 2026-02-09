@@ -197,14 +197,28 @@ enum State {
 @export_group("Rail Grinding")
 ## Base speed on rails
 @export var rail_base_speed: float = 15.0
-## Speed boost per CTRL press
+## Speed impulse when CTRL is first pressed during a grind
 @export var rail_speed_boost_increment: float = 2.0
 ## Maximum rail speed
 @export var rail_max_speed: float = 35.0
-## Speed decay rate (how fast boost decays back to base)
+## Base drag while grinding
 @export var rail_speed_decay: float = 3.0
 ## Jump velocity when jumping off rail
 @export var rail_jump_velocity: float = 12.0
+## Auto-attach distance to nearby rails while airborne
+@export var rail_attach_range: float = 1.35
+## Minimum speed needed for automatic rail attachment
+@export var rail_attach_speed_threshold: float = 4.0
+## How strongly gravity accelerates/decelerates along rail slope
+@export var rail_gravity_influence: float = 28.0
+## Hold CTRL to crouch and build speed on rail
+@export var rail_crouch_acceleration: float = 24.0
+## Reduces drag while crouching on rail (lower = less drag)
+@export var rail_crouch_drag_multiplier: float = 0.35
+## Maximum speed multiplier while crouching
+@export var rail_crouch_speed_multiplier: float = 1.7
+## Minimum speed when first attaching to a rail
+@export var rail_entry_speed_floor: float = 10.0
 
 @export_group("Auto Path")
 ## Speed along automatic path (can be overridden per-path)
@@ -219,6 +233,12 @@ enum State {
 @export var swim_deceleration: float = 15.0
 ## Vertical swim speed (when holding jump or action)
 @export var swim_vertical_speed: float = 8.0
+## Buoyancy acceleration when submerged and no vertical input
+@export var swim_buoyancy: float = 3.5
+## Extra drag applied to submerged full-3D swim velocity
+@export var swim_underwater_drag: float = 2.0
+## Strength of snapping to the water surface while surface swimming
+@export var swim_surface_snap_strength: float = 8.0
 ## Jump velocity when jumping out of water from surface
 @export var swim_surface_jump_velocity: float = 12.0
 ## Submersion threshold (0.0 to 1.0, where 0.67 = 2/3 submerged)
@@ -309,6 +329,7 @@ var current_rail: Path3D = null
 var rail_path_follow: PathFollow3D = null
 var rail_current_speed: float = 0.0
 var rail_direction: float = 1.0  # 1.0 = forward along path, -1.0 = backward
+var _rail_entry_speed: float = 0.0
 
 # Auto path
 var auto_path: Path3D = null
@@ -675,7 +696,12 @@ func _enter_state(state: State) -> void:
 			air_jump_available = false
 			wall_jump_performed.emit()
 		State.RAIL_GRINDING:
-			rail_current_speed = rail_base_speed
+			var max_entry_speed := rail_max_speed * rail_crouch_speed_multiplier
+			rail_current_speed = clampf(
+				maxf(_rail_entry_speed, rail_entry_speed_floor),
+				0.0,
+				max_entry_speed
+			)
 			rail_grind_started.emit(current_rail)
 		State.SWIMMING_SURFACE:
 			# Reset spin attack input tracking
@@ -691,8 +717,9 @@ func _enter_state(state: State) -> void:
 		State.SWIMMING_DRILL_DASH:
 			swim_drill_dash_timer = 0.0
 			# Set dash direction to current facing or input direction
-			if world_input_direction.length() > 0.1:
-				swim_drill_dash_direction = world_input_direction.normalized()
+			var swim_dir := _get_swim_input_direction(true)
+			if swim_dir.length() > 0.1:
+				swim_drill_dash_direction = swim_dir
 			else:
 				swim_drill_dash_direction = -global_transform.basis.z
 			swim_drill_dash_started.emit()
@@ -890,6 +917,10 @@ func _process_airborne(delta: float) -> void:
 	# Check for Light Dash (highest priority)
 	if action_just_pressed and _check_light_dash():
 		return
+
+	# Check for rail attachment
+	if _try_attach_to_nearby_rail():
+		return
 	
 	# Check for wall hug
 	if _check_wall_hug():
@@ -923,6 +954,10 @@ func _process_air_rolling(delta: float) -> void:
 	# Check for Light Dash (highest priority)
 	if action_just_pressed and _check_light_dash():
 		return
+
+	# Check for rail attachment
+	if _try_attach_to_nearby_rail():
+		return
 	
 	# Check for jump while air rolling (exits roll)
 	if jump_just_pressed and air_jump_available and wall_jump_air_jump_timer <= 0:
@@ -944,6 +979,10 @@ func _process_side_jump(delta: float) -> void:
 	
 	# Check for Light Dash (highest priority)
 	if action_just_pressed and _check_light_dash():
+		return
+
+	# Check for rail attachment
+	if _try_attach_to_nearby_rail():
 		return
 	
 	# Check for wall hug
@@ -1140,7 +1179,7 @@ func _process_light_dash(_delta: float) -> void:
 
 
 func _process_rail_grinding(delta: float) -> void:
-	if not current_rail or not rail_path_follow:
+	if not current_rail or not rail_path_follow or not current_rail.curve:
 		_exit_rail()
 		return
 	
@@ -1149,14 +1188,30 @@ func _process_rail_grinding(delta: float) -> void:
 		_jump_off_rail()
 		return
 	
-	# Check for speed boost (press CTRL)
-	if action_just_pressed:
-		rail_current_speed = minf(rail_current_speed + rail_speed_boost_increment, rail_max_speed)
-		rail_boost.emit()
+	var forward := _get_rail_forward_direction()
+	if forward.length() < 0.001:
+		_exit_rail()
+		return
+
+	var crouching := action_pressed
+	var max_speed := rail_max_speed * (rail_crouch_speed_multiplier if crouching else 1.0)
+	var gravity_accel := Vector3.DOWN.dot(forward) * rail_gravity_influence
+	rail_current_speed += gravity_accel * delta
+
+	if crouching:
+		rail_current_speed += rail_crouch_acceleration * delta
+		if action_just_pressed:
+			rail_current_speed += rail_speed_boost_increment
+			rail_boost.emit()
 	
-	# Decay speed back toward base
-	if rail_current_speed > rail_base_speed:
-		rail_current_speed = maxf(rail_current_speed - rail_speed_decay * delta, rail_base_speed)
+	var drag_rate := rail_speed_decay * (rail_crouch_drag_multiplier if crouching else 1.0)
+	rail_current_speed = maxf(rail_current_speed - drag_rate * delta, 0.0)
+	rail_current_speed = clampf(rail_current_speed, 0.0, max_speed)
+
+	# If momentum is exhausted, drop out of grind.
+	if rail_current_speed < 0.5:
+		_exit_rail()
+		return
 	
 	# Move along the rail path
 	rail_path_follow.progress += rail_current_speed * rail_direction * delta
@@ -1166,12 +1221,11 @@ func _process_rail_grinding(delta: float) -> void:
 	
 	# Rotate player to face rail direction
 	if player_model:
-		var forward = rail_path_follow.global_transform.basis.z * rail_direction
 		if forward.length() > 0.01:
 			_rotate_player_model_to_direction(forward, delta)
 	
 	# Check if reached end of rail
-	if rail_path_follow.progress_ratio >= 1.0 or rail_path_follow.progress_ratio <= 0.0:
+	if not rail_path_follow.loop and (rail_path_follow.progress_ratio >= 1.0 or rail_path_follow.progress_ratio <= 0.0):
 		_exit_rail()
 
 
@@ -1223,23 +1277,18 @@ func _process_swimming_surface(delta: float) -> void:
 	# Check for jump out of water
 	if jump_just_pressed:
 		velocity.y = swim_surface_jump_velocity
-		is_in_water = false
+		exit_water(current_water_body)
 		_change_state(State.AIRBORNE)
 		return
 	
-	# Check for swimming down (submerge)
+	# Keep body close to the surface while allowing explicit dive input.
+	var depth := water_surface_y - global_position.y
+	velocity.y = clampf(depth * swim_surface_snap_strength, -swim_vertical_speed, swim_vertical_speed)
 	if action_pressed:
 		velocity.y = -swim_vertical_speed
-	else:
-		# Stay at surface level
-		velocity.y = 0
-		# Gently push back to surface if slightly below
-		var depth = water_surface_y - global_position.y
-		if depth > 0.1:
-			velocity.y = swim_vertical_speed * 0.5
 	
 	# Apply horizontal swimming movement
-	_apply_swim_movement(delta)
+	_apply_swim_movement(delta, false)
 	
 	# Track input for spin attack
 	_track_spin_attack_input(delta)
@@ -1270,19 +1319,10 @@ func _process_swimming_submerged(delta: float) -> void:
 		_change_state(State.SWIMMING_SPIN_ATTACK)
 		return
 	
-	# Vertical movement
-	if jump_pressed and not action_pressed:
-		# Swim up
-		velocity.y = swim_vertical_speed
-	elif action_pressed and not jump_pressed:
-		# Swim down
-		velocity.y = -swim_vertical_speed
-	else:
-		# Maintain current depth (no vertical movement)
-		velocity.y = 0
-	
-	# Apply horizontal swimming movement
-	_apply_swim_movement(delta)
+	# Apply full 3D swimming movement (camera-relative + vertical controls)
+	_apply_swim_movement(delta, true)
+	if not jump_pressed and not action_pressed:
+		velocity.y = clampf(velocity.y + swim_buoyancy * delta, -swim_vertical_speed, swim_vertical_speed)
 	
 	# Track input for spin attack
 	_track_spin_attack_input(delta)
@@ -1330,8 +1370,9 @@ func _process_swimming_drill_dash(delta: float) -> void:
 	velocity = swim_drill_dash_direction * swim_drill_dash_speed
 	
 	# Allow slight directional influence
-	if world_input_direction.length() > 0.1:
-		swim_drill_dash_direction = swim_drill_dash_direction.lerp(world_input_direction.normalized(), 0.02)
+	var swim_input := _get_swim_input_direction(true)
+	if swim_input.length() > 0.1:
+		swim_drill_dash_direction = swim_drill_dash_direction.lerp(swim_input.normalized(), 0.02)
 		swim_drill_dash_direction = swim_drill_dash_direction.normalized()
 
 
@@ -2011,14 +2052,14 @@ func _end_light_dash() -> void:
 #region Rail Grinding
 ## Call this to attach the player to a rail (from homing attack hit or jump collision)
 func attach_to_rail(rail: Path3D, entry_point: Vector3 = Vector3.ZERO) -> void:
-	if not rail:
+	if not rail or not rail.curve:
 		return
 	
 	current_rail = rail
 	
 	# Create or get PathFollow3D
 	rail_path_follow = PathFollow3D.new()
-	rail_path_follow.loop = false
+	rail_path_follow.loop = rail.curve.closed
 	rail_path_follow.rotation_mode = PathFollow3D.ROTATION_ORIENTED
 	rail.add_child(rail_path_follow)
 	
@@ -2028,26 +2069,33 @@ func attach_to_rail(rail: Path3D, entry_point: Vector3 = Vector3.ZERO) -> void:
 		var closest_offset = curve.get_closest_offset(rail.to_local(entry_point))
 		rail_path_follow.progress = closest_offset
 	
-	# Determine rail direction based on player velocity
-	var horizontal_vel = Vector3(velocity.x, 0, velocity.z)
-	if horizontal_vel.length() > 0.1:
-		var path_forward = rail_path_follow.global_transform.basis.z
-		rail_direction = 1.0 if horizontal_vel.dot(path_forward) >= 0 else -1.0
-	else:
-		rail_direction = 1.0
-	
+	# Preserve incoming momentum and infer travel direction from entry velocity.
+	var path_forward := rail_path_follow.global_transform.basis.z.normalized()
+	if path_forward.length() < 0.001:
+		path_forward = rail.global_transform.basis.z.normalized()
+	var entry_speed_signed := velocity.dot(path_forward)
+	var horizontal_speed := Vector3(velocity.x, 0, velocity.z).length()
+	if absf(entry_speed_signed) < 0.1 and horizontal_speed > 0.1:
+		entry_speed_signed = horizontal_speed
+	rail_direction = 1.0 if entry_speed_signed >= 0.0 else -1.0
+	_rail_entry_speed = clampf(
+		maxf(absf(entry_speed_signed), rail_entry_speed_floor),
+		0.0,
+		rail_max_speed * rail_crouch_speed_multiplier
+	)
+
 	velocity = Vector3.ZERO
 	_change_state(State.RAIL_GRINDING)
 
 
 func _jump_off_rail() -> void:
-	velocity = Vector3.ZERO
-	velocity.y = rail_jump_velocity
+	var forward := _get_rail_forward_direction()
+	var launch_horizontal := Vector3(forward.x, 0.0, forward.z)
+	if launch_horizontal.length() > 0.001:
+		launch_horizontal = launch_horizontal.normalized()
 	
-	# Add some horizontal velocity in the rail direction
-	if rail_path_follow:
-		var forward = rail_path_follow.global_transform.basis.z * rail_direction
-		velocity += forward * rail_current_speed * 0.5
+	velocity = launch_horizontal * rail_current_speed
+	velocity.y = rail_jump_velocity
 	
 	_exit_rail()
 	
@@ -2068,6 +2116,83 @@ func _exit_rail() -> void:
 		else:
 			air_jump_available = true
 			_change_state(State.AIRBORNE)
+
+
+func _get_rail_forward_direction() -> Vector3:
+	if not rail_path_follow:
+		return Vector3.ZERO
+	var forward := rail_path_follow.global_transform.basis.z * rail_direction
+	return forward.normalized() if forward.length() > 0.001 else Vector3.ZERO
+
+
+func _sample_curve_tangent(curve: Curve3D, offset: float, step: float = 0.25) -> Vector3:
+	var length := curve.get_baked_length()
+	if length <= 0.001:
+		return Vector3.ZERO
+	var prev_offset := maxf(offset - step, 0.0)
+	var next_offset := minf(offset + step, length)
+	var prev_point := curve.sample_baked(prev_offset, true)
+	var next_point := curve.sample_baked(next_offset, true)
+	var tangent := next_point - prev_point
+	return tangent.normalized() if tangent.length() > 0.001 else Vector3.ZERO
+
+
+func _try_attach_to_nearby_rail() -> bool:
+	if current_state in [State.RAIL_GRINDING, State.LIGHT_DASH, State.AUTO_PATH, State.HURT]:
+		return false
+	if _is_swimming_state():
+		return false
+	if is_grounded and not jump_just_pressed:
+		return false
+	
+	var horizontal_speed := Vector3(velocity.x, 0.0, velocity.z).length()
+	if horizontal_speed < rail_attach_speed_threshold and not jump_just_pressed:
+		return false
+	
+	var tree := get_tree()
+	if not tree:
+		return false
+	
+	var best_rail: Path3D = null
+	var best_distance := rail_attach_range
+	var best_world_point := Vector3.ZERO
+	
+	for node in tree.get_nodes_in_group("rails"):
+		if not (node is Path3D):
+			continue
+		var rail := node as Path3D
+		var curve := rail.curve
+		if not curve or curve.get_point_count() < 2:
+			continue
+		
+		var local_pos := rail.to_local(global_position)
+		var closest_offset := curve.get_closest_offset(local_pos)
+		var closest_local := curve.sample_baked(closest_offset, true)
+		var closest_world := rail.to_global(closest_local)
+		var distance := global_position.distance_to(closest_world)
+		if distance > rail_attach_range:
+			continue
+		
+		var local_tangent := _sample_curve_tangent(curve, closest_offset)
+		if local_tangent.length() < 0.001:
+			continue
+		
+		# Avoid side-snapping from a perpendicular crossing.
+		var world_tangent := (rail.global_transform.basis * local_tangent).normalized()
+		var alignment := absf(world_tangent.dot(Vector3(velocity.x, 0.0, velocity.z).normalized())) if horizontal_speed > 0.1 else 1.0
+		if alignment < 0.2 and not jump_just_pressed:
+			continue
+		
+		if distance < best_distance:
+			best_distance = distance
+			best_rail = rail
+			best_world_point = closest_world
+	
+	if best_rail:
+		attach_to_rail(best_rail, best_world_point)
+		return true
+	
+	return false
 #endregion
 
 
@@ -2141,7 +2266,9 @@ func enter_water(water_body: Area3D, surface_y: float) -> void:
 
 
 ## Call this when player exits a water body
-func exit_water() -> void:
+func exit_water(water_body: Area3D = null) -> void:
+	if water_body and current_water_body and water_body != current_water_body:
+		return
 	var old_water = current_water_body
 	is_in_water = false
 	current_water_body = null
@@ -2172,21 +2299,54 @@ func _is_swimming_state() -> bool:
 	]
 
 
-func _apply_swim_movement(delta: float) -> void:
-	var target_velocity = Vector3.ZERO
+func _apply_swim_movement(delta: float, full_3d: bool) -> void:
+	var input_dir := _get_swim_input_direction(full_3d)
+	var target_velocity := input_dir * swim_max_speed if input_dir.length() > 0.1 else Vector3.ZERO
 	
-	if world_input_direction.length() > 0.1:
-		target_velocity = world_input_direction * swim_max_speed
+	if full_3d:
+		var accel := swim_acceleration if target_velocity.length() > 0.1 else swim_deceleration + swim_underwater_drag
+		velocity = velocity.move_toward(target_velocity, accel * delta)
+		if velocity.length() > 0.1:
+			_rotate_player_model_to_direction(velocity, delta)
+		return
 	
-	# Smoothly accelerate toward target
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
-	if target_velocity.length() > 0.1:
-		horizontal = horizontal.move_toward(target_velocity, swim_acceleration * delta)
+	# Surface swim keeps horizontal steering while vertical velocity is handled separately.
+	var horizontal := Vector3(velocity.x, 0, velocity.z)
+	var target_horizontal := Vector3(target_velocity.x, 0, target_velocity.z)
+	if target_horizontal.length() > 0.1:
+		horizontal = horizontal.move_toward(target_horizontal, swim_acceleration * delta)
+		_rotate_player_model_to_direction(target_horizontal, delta)
 	else:
 		horizontal = horizontal.move_toward(Vector3.ZERO, swim_deceleration * delta)
 	
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
+
+
+func _get_swim_input_direction(full_3d: bool) -> Vector3:
+	var direction := Vector3.ZERO
+	
+	if camera:
+		var cam_right := camera.global_transform.basis.x
+		var cam_forward := -camera.global_transform.basis.z
+		if not full_3d:
+			cam_right.y = 0.0
+			cam_forward.y = 0.0
+		if cam_right.length() > 0.001:
+			cam_right = cam_right.normalized()
+		if cam_forward.length() > 0.001:
+			cam_forward = cam_forward.normalized()
+		direction = cam_right * input_direction.x + cam_forward * -input_direction.y
+	else:
+		direction = Vector3(input_direction.x, 0.0, -input_direction.y)
+	
+	if full_3d:
+		if jump_pressed and not action_pressed:
+			direction.y += 1.0
+		elif action_pressed and not jump_pressed:
+			direction.y -= 1.0
+	
+	return direction.normalized() if direction.length() > 0.001 else Vector3.ZERO
 
 
 func _track_spin_attack_input(_delta: float) -> void:
@@ -2196,8 +2356,9 @@ func _track_spin_attack_input(_delta: float) -> void:
 		swim_spin_input_history.pop_front()
 	
 	# Check for direction change
-	if world_input_direction.length() > 0.1:
-		var current_dir = world_input_direction.normalized()
+	var swim_input := _get_swim_input_direction(true)
+	if swim_input.length() > 0.1:
+		var current_dir = swim_input.normalized()
 		
 		if swim_last_input_direction.length() > 0.1:
 			# Check if direction is roughly opposite (dot product < -0.5)
