@@ -201,8 +201,8 @@ enum State {
 @export var rail_speed_boost_increment: float = 2.0
 ## Maximum rail speed
 @export var rail_max_speed: float = 35.0
-## Base drag while grinding
-@export var rail_speed_decay: float = 3.0
+## Optional drag while grinding (set to 0 for momentum-preserving behavior)
+@export var rail_speed_decay: float = 0.0
 ## Jump velocity when jumping off rail
 @export var rail_jump_velocity: float = 12.0
 ## Auto-attach distance to nearby rails while airborne
@@ -219,6 +219,10 @@ enum State {
 @export var rail_crouch_speed_multiplier: float = 1.7
 ## Minimum speed when first attaching to a rail
 @export var rail_entry_speed_floor: float = 10.0
+## Visual/mount offset so the player's feet sit above the rail
+@export var rail_mount_height_offset: float = 0.9
+## Cooldown after leaving a rail to prevent instant re-attach
+@export var rail_reattach_cooldown: float = 0.22
 
 @export_group("Auto Path")
 ## Speed along automatic path (can be overridden per-path)
@@ -328,8 +332,9 @@ var skid_direction: Vector3 = Vector3.ZERO  # Direction player was moving when s
 var current_rail: Path3D = null
 var rail_path_follow: PathFollow3D = null
 var rail_current_speed: float = 0.0
-var rail_direction: float = 1.0  # 1.0 = forward along path, -1.0 = backward
-var _rail_entry_speed: float = 0.0
+var rail_direction: float = 1.0  # Last meaningful along-rail direction sign
+var _rail_entry_speed: float = 0.0  # Signed speed along rail tangent
+var _rail_reattach_timer: float = 0.0
 
 # Auto path
 var auto_path: Path3D = null
@@ -567,6 +572,8 @@ func _update_grounded_status() -> void:
 func _update_timers(delta: float) -> void:
 	if _ramp_detach_timer > 0.0:
 		_ramp_detach_timer = maxf(_ramp_detach_timer - delta, 0.0)
+	if _rail_reattach_timer > 0.0:
+		_rail_reattach_timer = maxf(_rail_reattach_timer - delta, 0.0)
 	
 	# Coyote time
 	if coyote_timer > 0:
@@ -636,6 +643,8 @@ func _exit_state(state: State) -> void:
 			pass
 		State.RAIL_GRINDING:
 			var old_rail = current_rail
+			if rail_path_follow:
+				rail_path_follow.queue_free()
 			current_rail = null
 			rail_path_follow = null
 			rail_current_speed = 0.0
@@ -677,7 +686,8 @@ func _enter_state(state: State) -> void:
 			homing_attack_started.emit(homing_target)
 			homing_start_position = global_position
 			if homing_target and is_instance_valid(homing_target):
-				var distance := homing_start_position.distance_to(homing_target.global_position)
+				var target_pos := _get_homing_target_world_position(homing_target)
+				var distance := homing_start_position.distance_to(target_pos)
 				if homing_attack_speed > 0.0:
 					homing_attack_duration = clampf(distance / homing_attack_speed, homing_arc_min_duration, homing_arc_max_duration)
 				else:
@@ -697,11 +707,19 @@ func _enter_state(state: State) -> void:
 			wall_jump_performed.emit()
 		State.RAIL_GRINDING:
 			var max_entry_speed := rail_max_speed * rail_crouch_speed_multiplier
+			var entry_sign := signf(_rail_entry_speed)
+			if entry_sign == 0.0:
+				entry_sign = rail_direction
+			if entry_sign == 0.0:
+				entry_sign = 1.0
+			rail_direction = entry_sign
 			rail_current_speed = clampf(
-				maxf(_rail_entry_speed, rail_entry_speed_floor),
-				0.0,
+				_rail_entry_speed,
+				-max_entry_speed,
 				max_entry_speed
 			)
+			if absf(rail_current_speed) < rail_entry_speed_floor:
+				rail_current_speed = rail_entry_speed_floor * rail_direction
 			rail_grind_started.emit(current_rail)
 		State.SWIMMING_SURFACE:
 			# Reset spin attack input tracking
@@ -1023,7 +1041,7 @@ func _process_homing_attack(delta: float) -> void:
 		return
 	
 	# Move toward target
-	var target_pos := homing_target.global_position
+	var target_pos := _get_homing_target_world_position(homing_target)
 	var to_target := target_pos - global_position
 	if homing_use_arc:
 		var duration := maxf(homing_attack_duration, 0.01)
@@ -1188,36 +1206,63 @@ func _process_rail_grinding(delta: float) -> void:
 		_jump_off_rail()
 		return
 	
-	var forward := _get_rail_forward_direction()
-	if forward.length() < 0.001:
+	var tangent := _get_rail_tangent_direction(rail_path_follow.progress)
+	if tangent.length() < 0.001:
 		_exit_rail()
 		return
 
 	var crouching := action_pressed
 	var max_speed := rail_max_speed * (rail_crouch_speed_multiplier if crouching else 1.0)
-	var gravity_accel := Vector3.DOWN.dot(forward) * rail_gravity_influence
+	# SA2-style core: integrate gravity along rail tangent (progress direction), not movement direction.
+	var gravity_accel := Vector3.DOWN.dot(tangent) * rail_gravity_influence
 	rail_current_speed += gravity_accel * delta
 
 	if crouching:
-		rail_current_speed += rail_crouch_acceleration * delta
+		var accel_sign := signf(rail_current_speed)
+		if accel_sign == 0.0:
+			accel_sign = signf(gravity_accel)
+		if accel_sign == 0.0:
+			accel_sign = rail_direction
+		if accel_sign == 0.0:
+			accel_sign = 1.0
+		rail_current_speed += accel_sign * rail_crouch_acceleration * delta
 		if action_just_pressed:
-			rail_current_speed += rail_speed_boost_increment
+			rail_current_speed += accel_sign * rail_speed_boost_increment
 			rail_boost.emit()
 	
-	var drag_rate := rail_speed_decay * (rail_crouch_drag_multiplier if crouching else 1.0)
-	rail_current_speed = maxf(rail_current_speed - drag_rate * delta, 0.0)
-	rail_current_speed = clampf(rail_current_speed, 0.0, max_speed)
-
-	# If momentum is exhausted, drop out of grind.
-	if rail_current_speed < 0.5:
-		_exit_rail()
-		return
+	# Optional resistance; keep disabled by default so flat rails preserve momentum.
+	if rail_speed_decay > 0.0:
+		var drag_rate := rail_speed_decay * (rail_crouch_drag_multiplier if crouching else 1.0)
+		rail_current_speed = move_toward(rail_current_speed, 0.0, drag_rate * delta)
+	rail_current_speed = clampf(rail_current_speed, -max_speed, max_speed)
 	
-	# Move along the rail path
-	rail_path_follow.progress += rail_current_speed * rail_direction * delta
+	var movement_sign := signf(rail_current_speed)
+	if movement_sign == 0.0:
+		movement_sign = signf(gravity_accel)
+	if movement_sign == 0.0:
+		movement_sign = rail_direction
+	if movement_sign == 0.0:
+		movement_sign = 1.0
+	rail_direction = movement_sign
+	var forward := tangent * movement_sign
+	
+	# Move along the rail path and force a clean jump-off at open-rail endpoints.
+	var curve_length := current_rail.curve.get_baked_length()
+	var next_progress := rail_path_follow.progress + rail_current_speed * delta
+	if not rail_path_follow.loop and curve_length > 0.001:
+		if next_progress <= 0.0:
+			_auto_jump_off_rail_end(0.0)
+			return
+		if next_progress >= curve_length:
+			_auto_jump_off_rail_end(curve_length)
+			return
+	rail_path_follow.progress = next_progress
 	
 	# Update player position to follow the path
-	global_position = rail_path_follow.global_position
+	var rail_up := _get_rail_up_direction()
+	global_position = rail_path_follow.global_position + rail_up * rail_mount_height_offset
+	velocity = forward * absf(rail_current_speed)
+	_skip_move_and_slide = true
 	
 	# Rotate player to face rail direction
 	if player_model:
@@ -1226,7 +1271,7 @@ func _process_rail_grinding(delta: float) -> void:
 	
 	# Check if reached end of rail
 	if not rail_path_follow.loop and (rail_path_follow.progress_ratio >= 1.0 or rail_path_follow.progress_ratio <= 0.0):
-		_exit_rail()
+		_auto_jump_off_rail_end(rail_path_follow.progress)
 
 
 func _process_auto_path(delta: float) -> void:
@@ -1690,7 +1735,8 @@ func _on_homing_attack_hit() -> void:
 	
 	# Check if target is a rail
 	if homing_target.is_in_group("rails") and homing_target is Path3D:
-		attach_to_rail(homing_target as Path3D, global_position)
+		var rail_target_pos := _get_homing_target_world_position(homing_target)
+		attach_to_rail(homing_target as Path3D, rail_target_pos)
 		homing_target = null
 		return
 	
@@ -1740,7 +1786,8 @@ func _update_homing_reticle() -> void:
 			
 			# Position reticle over target (screen space)
 			if camera:
-				var screen_pos = camera.unproject_position(homing_target.global_position)
+				var target_screen_pos := _get_homing_target_world_position(homing_target)
+				var screen_pos = camera.unproject_position(target_screen_pos)
 				# FIX: Center the reticle on the target position
 				var pivot = homing_reticle.pivot_offset
 				var scale = homing_reticle.scale
@@ -1756,6 +1803,19 @@ func _update_homing_reticle() -> void:
 				homing_reticle.visible = false
 
 
+func _get_homing_target_world_position(target: Node3D) -> Vector3:
+	if not target or not is_instance_valid(target):
+		return global_position
+	if target is Path3D:
+		var rail := target as Path3D
+		if rail.curve and rail.curve.get_point_count() >= 2:
+			var local_probe := rail.to_local(global_position)
+			var closest_offset := rail.curve.get_closest_offset(local_probe)
+			var closest_local := rail.curve.sample_baked(closest_offset, true)
+			return rail.to_global(closest_local)
+	return target.global_position
+
+
 func _find_best_homing_target() -> Node3D:
 	var tree := get_tree()
 	if not tree:
@@ -1765,7 +1825,18 @@ func _find_best_homing_target() -> Node3D:
 	if _cached_camera_forward.length_squared() < 0.001:
 		return null
 	
-	var targets = tree.get_nodes_in_group("targetable") + tree.get_nodes_in_group("enemies") + tree.get_nodes_in_group("rails")
+	var raw_targets = tree.get_nodes_in_group("targetable") + tree.get_nodes_in_group("enemies") + tree.get_nodes_in_group("rails")
+	var targets: Array[Node3D] = []
+	var seen: Dictionary = {}
+	for target in raw_targets:
+		if not is_instance_valid(target) or not (target is Node3D):
+			continue
+		var node := target as Node3D
+		var id := node.get_instance_id()
+		if seen.has(id):
+			continue
+		seen[id] = true
+		targets.append(node)
 	
 	# PERFORMANCE: Early out if no targets
 	if targets.is_empty():
@@ -1775,10 +1846,8 @@ func _find_best_homing_target() -> Node3D:
 	var best_score: float = -1.0
 	
 	for target in targets:
-		if not is_instance_valid(target) or not target is Node3D:
-			continue
-		
-		var to_target = target.global_position - global_position
+		var target_pos := _get_homing_target_world_position(target)
+		var to_target := target_pos - global_position
 		var distance = to_target.length()
 		
 		# Range check
@@ -1799,7 +1868,8 @@ func _is_valid_homing_target(target: Node3D) -> bool:
 	if not target or not is_instance_valid(target):
 		return false
 	
-	var distance = global_position.distance_to(target.global_position)
+	var target_pos := _get_homing_target_world_position(target)
+	var distance = global_position.distance_to(target_pos)
 	return distance <= homing_range
 
 
@@ -2056,6 +2126,7 @@ func attach_to_rail(rail: Path3D, entry_point: Vector3 = Vector3.ZERO) -> void:
 		return
 	
 	current_rail = rail
+	_rail_reattach_timer = 0.0
 	
 	# Create or get PathFollow3D
 	rail_path_follow = PathFollow3D.new()
@@ -2064,27 +2135,48 @@ func attach_to_rail(rail: Path3D, entry_point: Vector3 = Vector3.ZERO) -> void:
 	rail.add_child(rail_path_follow)
 	
 	# Find closest point on rail to entry point
-	var curve = rail.curve
-	if curve and entry_point != Vector3.ZERO:
-		var closest_offset = curve.get_closest_offset(rail.to_local(entry_point))
-		rail_path_follow.progress = closest_offset
+	var curve := rail.curve
+	var probe_point := entry_point if entry_point != Vector3.ZERO else global_position
+	var closest_offset := curve.get_closest_offset(rail.to_local(probe_point))
+	rail_path_follow.progress = closest_offset
 	
-	# Preserve incoming momentum and infer travel direction from entry velocity.
-	var path_forward := rail_path_follow.global_transform.basis.z.normalized()
+	var rail_world_point := rail.to_global(curve.sample_baked(closest_offset, true))
+	var path_forward := _get_rail_tangent_direction(closest_offset)
 	if path_forward.length() < 0.001:
 		path_forward = rail.global_transform.basis.z.normalized()
+	
+	# Preserve incoming momentum and infer travel direction from entry velocity.
 	var entry_speed_signed := velocity.dot(path_forward)
-	var horizontal_speed := Vector3(velocity.x, 0, velocity.z).length()
-	if absf(entry_speed_signed) < 0.1 and horizontal_speed > 0.1:
-		entry_speed_signed = horizontal_speed
-	rail_direction = 1.0 if entry_speed_signed >= 0.0 else -1.0
+	if absf(entry_speed_signed) < 0.1:
+		var fallback_dir: Vector3 = Vector3.ZERO
+		if world_input_direction.length() > 0.1:
+			fallback_dir = world_input_direction
+		elif velocity.length() > 0.1:
+			fallback_dir = velocity.normalized()
+		else:
+			fallback_dir = _get_facing_direction()
+		if current_state == State.HOMING_ATTACK and homing_start_position.distance_to(rail_world_point) > 0.001:
+			fallback_dir = (rail_world_point - homing_start_position).normalized()
+		var fallback_dot := fallback_dir.dot(path_forward)
+		if absf(fallback_dot) > 0.001:
+			entry_speed_signed = fallback_dot * maxf(velocity.length(), rail_entry_speed_floor)
+	
+	var speed_sign := signf(entry_speed_signed)
+	if speed_sign == 0.0:
+		speed_sign = 1.0
+	if absf(entry_speed_signed) < rail_entry_speed_floor:
+		entry_speed_signed = rail_entry_speed_floor * speed_sign
+	
+	rail_direction = speed_sign
 	_rail_entry_speed = clampf(
-		maxf(absf(entry_speed_signed), rail_entry_speed_floor),
-		0.0,
+		entry_speed_signed,
+		-rail_max_speed * rail_crouch_speed_multiplier,
 		rail_max_speed * rail_crouch_speed_multiplier
 	)
 
-	velocity = Vector3.ZERO
+	var rail_up := _get_rail_up_direction()
+	global_position = rail_world_point + rail_up * rail_mount_height_offset
+	velocity = path_forward * _rail_entry_speed
 	_change_state(State.RAIL_GRINDING)
 
 
@@ -2094,24 +2186,45 @@ func _jump_off_rail() -> void:
 	if launch_horizontal.length() > 0.001:
 		launch_horizontal = launch_horizontal.normalized()
 	
-	velocity = launch_horizontal * rail_current_speed
+	velocity = launch_horizontal * absf(rail_current_speed)
 	velocity.y = rail_jump_velocity
+	_rail_reattach_timer = rail_reattach_cooldown
 	
-	_exit_rail()
-	
-	# Transition to airborne
+	_exit_rail(true)
 	air_jump_available = true
-	_change_state(State.AIRBORNE)
 
 
-func _exit_rail() -> void:
+func _auto_jump_off_rail_end(end_progress: float) -> void:
+	if rail_path_follow and current_rail and current_rail.curve:
+		var curve_len := current_rail.curve.get_baked_length()
+		rail_path_follow.progress = clampf(end_progress, 0.0, curve_len)
+		var end_forward := _get_rail_forward_direction()
+		var launch_horizontal := Vector3(end_forward.x, 0.0, end_forward.z)
+		if launch_horizontal.length() > 0.001:
+			launch_horizontal = launch_horizontal.normalized()
+		else:
+			launch_horizontal = _get_facing_direction()
+		velocity = launch_horizontal * absf(rail_current_speed)
+		velocity.y = maxf(velocity.y, rail_jump_velocity)
+	else:
+		velocity.y = maxf(velocity.y, rail_jump_velocity)
+	
+	_rail_reattach_timer = rail_reattach_cooldown
+	_exit_rail(true)
+	air_jump_available = true
+
+
+func _exit_rail(force_airborne: bool = false) -> void:
 	if rail_path_follow:
 		rail_path_follow.queue_free()
 		rail_path_follow = null
 	
 	# State exit will handle the rest via _exit_state
 	if current_state == State.RAIL_GRINDING:
-		if is_grounded:
+		if force_airborne:
+			air_jump_available = true
+			_change_state(State.AIRBORNE)
+		elif is_grounded:
 			_change_state(State.IDLE)
 		else:
 			air_jump_available = true
@@ -2121,16 +2234,53 @@ func _exit_rail() -> void:
 func _get_rail_forward_direction() -> Vector3:
 	if not rail_path_follow:
 		return Vector3.ZERO
-	var forward := rail_path_follow.global_transform.basis.z * rail_direction
+	var forward := _get_rail_tangent_direction(rail_path_follow.progress)
+	if forward.length() < 0.001:
+		return Vector3.ZERO
+	var movement_sign := rail_direction
+	if absf(rail_current_speed) > 0.05:
+		movement_sign = signf(rail_current_speed)
+		if movement_sign == 0.0:
+			movement_sign = rail_direction
+		rail_direction = movement_sign
+	forward *= movement_sign
 	return forward.normalized() if forward.length() > 0.001 else Vector3.ZERO
+
+
+func _get_rail_tangent_direction(progress: float) -> Vector3:
+	if not current_rail or not current_rail.curve:
+		return Vector3.ZERO
+	var local_tangent := _sample_curve_tangent(current_rail.curve, progress)
+	if local_tangent.length() < 0.001:
+		return Vector3.ZERO
+	return (current_rail.global_transform.basis * local_tangent).normalized()
+
+
+func _get_rail_up_direction() -> Vector3:
+	if not rail_path_follow:
+		return Vector3.UP
+	var rail_up := rail_path_follow.global_transform.basis.y
+	if rail_up.length() < 0.001:
+		return Vector3.UP
+	rail_up = rail_up.normalized()
+	var tangent := _get_rail_tangent_direction(rail_path_follow.progress)
+	if tangent.length() > 0.001 and absf(rail_up.dot(tangent)) > 0.98:
+		return Vector3.UP
+	return rail_up
 
 
 func _sample_curve_tangent(curve: Curve3D, offset: float, step: float = 0.25) -> Vector3:
 	var length := curve.get_baked_length()
 	if length <= 0.001:
 		return Vector3.ZERO
-	var prev_offset := maxf(offset - step, 0.0)
-	var next_offset := minf(offset + step, length)
+	var prev_offset := 0.0
+	var next_offset := 0.0
+	if curve.closed:
+		prev_offset = fposmod(offset - step, length)
+		next_offset = fposmod(offset + step, length)
+	else:
+		prev_offset = maxf(offset - step, 0.0)
+		next_offset = minf(offset + step, length)
 	var prev_point := curve.sample_baked(prev_offset, true)
 	var next_point := curve.sample_baked(next_offset, true)
 	var tangent := next_point - prev_point
@@ -2139,6 +2289,8 @@ func _sample_curve_tangent(curve: Curve3D, offset: float, step: float = 0.25) ->
 
 func _try_attach_to_nearby_rail() -> bool:
 	if current_state in [State.RAIL_GRINDING, State.LIGHT_DASH, State.AUTO_PATH, State.HURT]:
+		return false
+	if _rail_reattach_timer > 0.0:
 		return false
 	if _is_swimming_state():
 		return false
