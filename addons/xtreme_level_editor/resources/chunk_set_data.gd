@@ -15,6 +15,9 @@ extends Resource
 ## Size of this chunk set in cells
 @export var size: Vector3i = Vector3i(64, 32, 64)
 
+## Grid-authored tile data for this chunk set
+@export var level_data: XtremeLevelData
+
 ## Spawn points within this chunk set
 @export var spawn_points: Array[XtremeSpawnPoint] = []
 
@@ -26,6 +29,15 @@ extends Resource
 
 ## Water zones in this chunk set
 @export var water_zones: Array[XtremeWaterZone] = []
+
+## Grind rails authored for this chunk set
+@export var grind_rails: Array[XtremeGrindRail] = []
+
+## Scripted roller coaster paths authored for this chunk set
+@export var roller_coasters: Array[XtremeRollerCoaster] = []
+
+## Light dash ring trails authored for this chunk set
+@export var light_dash_trails: Array[XtremeLightDashTrail] = []
 
 ## Editor metadata
 @export var editor_position: Vector2 = Vector2.ZERO  # Position in Level Overview graph

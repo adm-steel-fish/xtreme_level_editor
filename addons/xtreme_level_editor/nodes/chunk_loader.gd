@@ -4,6 +4,8 @@ extends Node3D
 ## Runtime Chunk Loader - Manages loading/unloading of level chunks based on player position
 ## This node should be added to your level scene at runtime
 
+const INVALID_CHUNK_COORD := Vector3i(-2147483648, -2147483648, -2147483648)
+
 ## Emitted when a chunk starts loading
 signal chunk_loading(chunk_coord: Vector3i)
 
@@ -37,6 +39,9 @@ signal player_chunk_changed(old_chunk: Vector3i, new_chunk: Vector3i)
 ## Show debug visualization
 @export var debug_draw: bool = false
 
+## Use prebuilt chunks from exported scenes (StaticWorld/StaticChunk_*) when available
+@export var use_prebuilt_export_chunks: bool = true
+
 ## Currently loaded chunks: key = chunk coord, value = chunk node
 var _loaded_chunks: Dictionary = {}
 
@@ -51,14 +56,19 @@ var _grid_visualizer: Node3D
 
 ## Chunk mesh container
 var _chunk_container: Node3D
+var _prebuilt_chunks: Dictionary = {}
 
 func _ready() -> void:
 	_chunk_container = Node3D.new()
 	_chunk_container.name = "ChunkContainer"
 	add_child(_chunk_container)
+	if use_prebuilt_export_chunks:
+		_register_prebuilt_chunks()
 
 func _process(delta: float) -> void:
-	if not follow_target or not level_data or not grid_settings:
+	if not follow_target or not grid_settings:
+		return
+	if _prebuilt_chunks.is_empty() and not level_data:
 		return
 	
 	var target_pos := follow_target.global_position
@@ -73,15 +83,20 @@ func _process(delta: float) -> void:
 ## Convert world position to chunk coordinate
 func world_to_chunk(world_pos: Vector3) -> Vector3i:
 	var cell_size := grid_settings.get_cell_size()
+	var safe_chunk := Vector3i(
+		maxi(chunk_size.x, 1),
+		maxi(chunk_size.y, 1),
+		maxi(chunk_size.z, 1)
+	)
 	var grid_pos := Vector3i(
 		floori(world_pos.x / cell_size.x),
 		floori(world_pos.y / cell_size.y),
 		floori(world_pos.z / cell_size.z)
 	)
 	return Vector3i(
-		floori(float(grid_pos.x) / chunk_size.x),
-		floori(float(grid_pos.y) / chunk_size.y),
-		floori(float(grid_pos.z) / chunk_size.z)
+		floori(float(grid_pos.x) / safe_chunk.x),
+		floori(float(grid_pos.y) / safe_chunk.y),
+		floori(float(grid_pos.z) / safe_chunk.z)
 	)
 
 ## Convert chunk coordinate to world position (chunk origin)
@@ -133,6 +148,9 @@ func _update_loaded_chunks() -> void:
 
 ## Check if a chunk coordinate is valid (within level bounds)
 func _is_chunk_valid(chunk_coord: Vector3i) -> bool:
+	if use_prebuilt_export_chunks and not _prebuilt_chunks.is_empty():
+		return chunk_coord in _prebuilt_chunks
+
 	if not level_data:
 		return false
 	
@@ -151,6 +169,15 @@ func _load_chunk(chunk_coord: Vector3i) -> void:
 	
 	_loading_chunks[chunk_coord] = true
 	chunk_loading.emit(chunk_coord)
+
+	if use_prebuilt_export_chunks and chunk_coord in _prebuilt_chunks:
+		var prebuilt := _prebuilt_chunks[chunk_coord] as Node3D
+		if prebuilt and is_instance_valid(prebuilt):
+			prebuilt.visible = true
+			_loaded_chunks[chunk_coord] = prebuilt
+			_loading_chunks.erase(chunk_coord)
+			chunk_loaded.emit(chunk_coord)
+			return
 	
 	# Create chunk node
 	var chunk_node := Node3D.new()
@@ -186,9 +213,14 @@ func _load_chunk(chunk_coord: Vector3i) -> void:
 func _unload_chunk(chunk_coord: Vector3i) -> void:
 	if chunk_coord not in _loaded_chunks:
 		return
-	
+
 	var chunk_node: Node3D = _loaded_chunks[chunk_coord]
-	chunk_node.queue_free()
+	if use_prebuilt_export_chunks and chunk_coord in _prebuilt_chunks:
+		if chunk_node and is_instance_valid(chunk_node):
+			chunk_node.visible = false
+	else:
+		if chunk_node and is_instance_valid(chunk_node):
+			chunk_node.queue_free()
 	_loaded_chunks.erase(chunk_coord)
 	
 	chunk_unloaded.emit(chunk_coord)
@@ -294,3 +326,57 @@ func is_chunk_loaded(chunk_coord: Vector3i) -> bool:
 ## Get count of loaded chunks
 func get_loaded_chunk_count() -> int:
 	return _loaded_chunks.size()
+
+
+func _register_prebuilt_chunks() -> void:
+	_prebuilt_chunks.clear()
+
+	var meta_source: Node = self
+	var scene_root := get_tree().current_scene if get_tree() else null
+	if scene_root and scene_root.has_meta("xtreme_chunk_size"):
+		meta_source = scene_root
+	elif get_parent() and get_parent().has_meta("xtreme_chunk_size"):
+		meta_source = get_parent()
+
+	if meta_source.has_meta("xtreme_chunk_size"):
+		var meta_chunk_size := meta_source.get_meta("xtreme_chunk_size")
+		if meta_chunk_size is Vector3i:
+			var parsed := meta_chunk_size as Vector3i
+			if parsed.x > 0 and parsed.y > 0 and parsed.z > 0:
+				chunk_size = parsed
+
+	var static_world := get_node_or_null("StaticWorld") as Node3D
+	if not static_world and scene_root:
+		static_world = scene_root.get_node_or_null("StaticWorld") as Node3D
+	if not static_world:
+		return
+
+	for child in static_world.get_children():
+		if not (child is Node3D):
+			continue
+		var chunk_node := child as Node3D
+		var chunk_coord := _read_chunk_coord(chunk_node)
+		if chunk_coord == INVALID_CHUNK_COORD:
+			continue
+		_prebuilt_chunks[chunk_coord] = chunk_node
+		chunk_node.visible = false
+
+
+func _read_chunk_coord(chunk_node: Node3D) -> Vector3i:
+	if chunk_node.has_meta("xtreme_chunk_coord"):
+		var meta_value := chunk_node.get_meta("xtreme_chunk_coord")
+		if meta_value is Vector3i:
+			return meta_value as Vector3i
+
+	var regex := RegEx.new()
+	var err := regex.compile("^StaticChunk_(-?\\d+)_(-?\\d+)_(-?\\d+)$")
+	if err != OK:
+		return INVALID_CHUNK_COORD
+	var result := regex.search(chunk_node.name)
+	if not result:
+		return INVALID_CHUNK_COORD
+	return Vector3i(
+		int(result.get_string(1)),
+		int(result.get_string(2)),
+		int(result.get_string(3))
+	)

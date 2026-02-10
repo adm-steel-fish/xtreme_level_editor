@@ -75,6 +75,7 @@ var _redo_history: Array[Dictionary] = []
 
 # Last known mouse position
 var _last_mouse_pos: Vector2 = Vector2.ZERO
+var _last_hover_pos: Vector3i = Vector3i(-1, -1, -1)
 
 # ============ Phase 3: Level Systems ============
 
@@ -964,6 +965,49 @@ func _create_level_tools_tab() -> Control:
 	content.add_child(size_grid)
 	
 	content.add_child(HSeparator.new())
+
+	# Instance property overrides
+	content.add_child(_make_label("Instance Overrides"))
+	var prop_hint := Label.new()
+	prop_hint.text = "Applies to current selection, or hovered tile if nothing is selected."
+	prop_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	prop_hint.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
+	content.add_child(prop_hint)
+
+	var prop_key_row := HBoxContainer.new()
+	prop_key_row.add_child(_make_label("Key:"))
+	var prop_key_edit := LineEdit.new()
+	prop_key_edit.name = "InstancePropKey"
+	prop_key_edit.placeholder_text = "damage_amount"
+	prop_key_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	prop_key_row.add_child(prop_key_edit)
+	content.add_child(prop_key_row)
+
+	var prop_value_row := HBoxContainer.new()
+	prop_value_row.add_child(_make_label("Value:"))
+	var prop_value_edit := LineEdit.new()
+	prop_value_edit.name = "InstancePropValue"
+	prop_value_edit.placeholder_text = "12, true, {\"type\":\"spring\"}"
+	prop_value_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	prop_value_row.add_child(prop_value_edit)
+	content.add_child(prop_value_row)
+
+	var prop_buttons := HBoxContainer.new()
+	var set_prop_btn := Button.new()
+	set_prop_btn.text = "Set"
+	set_prop_btn.pressed.connect(_on_set_instance_property)
+	prop_buttons.add_child(set_prop_btn)
+	var remove_prop_btn := Button.new()
+	remove_prop_btn.text = "Remove Key"
+	remove_prop_btn.pressed.connect(_on_remove_instance_property)
+	prop_buttons.add_child(remove_prop_btn)
+	var clear_prop_btn := Button.new()
+	clear_prop_btn.text = "Clear All"
+	clear_prop_btn.pressed.connect(_on_clear_instance_properties)
+	prop_buttons.add_child(clear_prop_btn)
+	content.add_child(prop_buttons)
+
+	content.add_child(HSeparator.new())
 	
 	# Curved World
 	content.add_child(_make_label("Curved World"))
@@ -1045,6 +1089,46 @@ func _create_level_tools_tab() -> Control:
 	export_curve.text = "Apply Curved Shader"
 	export_curve.button_pressed = true
 	content.add_child(export_curve)
+
+	var export_mode_row := HBoxContainer.new()
+	export_mode_row.add_child(_make_label("Mode:"))
+	var export_mode := OptionButton.new()
+	export_mode.name = "ExportMode"
+	export_mode.add_item("Hybrid Chunked (Recommended)", 1)
+	export_mode.add_item("Legacy Single Mesh", 0)
+	export_mode.selected = 0
+	export_mode.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	export_mode_row.add_child(export_mode)
+	content.add_child(export_mode_row)
+
+	var chunk_size_row := HBoxContainer.new()
+	chunk_size_row.add_child(_make_label("Chunk Size:"))
+	var chunk_x := SpinBox.new()
+	chunk_x.name = "ExportChunkSizeX"
+	chunk_x.min_value = 1
+	chunk_x.max_value = 128
+	chunk_x.step = 1
+	chunk_x.value = 16
+	chunk_x.custom_minimum_size = Vector2(70, 0)
+	chunk_size_row.add_child(chunk_x)
+	var chunk_y := SpinBox.new()
+	chunk_y.name = "ExportChunkSizeY"
+	chunk_y.min_value = 1
+	chunk_y.max_value = 128
+	chunk_y.step = 1
+	chunk_y.value = 8
+	chunk_y.custom_minimum_size = Vector2(70, 0)
+	chunk_size_row.add_child(chunk_y)
+	var chunk_z := SpinBox.new()
+	chunk_z.name = "ExportChunkSizeZ"
+	chunk_z.min_value = 1
+	chunk_z.max_value = 128
+	chunk_z.step = 1
+	chunk_z.value = 16
+	chunk_z.custom_minimum_size = Vector2(70, 0)
+	chunk_size_row.add_child(chunk_z)
+	content.add_child(chunk_size_row)
+
 	var export_btn := Button.new()
 	export_btn.text = "Export Level"
 	export_btn.pressed.connect(_on_export_level)
@@ -1996,6 +2080,8 @@ func _on_new_level() -> void:
 	if not _editing_enabled:
 		_set_status("Enable editing first!")
 		return
+
+	_store_current_chunk_set_state()
 	_current_level = XtremeLevelData.new()
 	_current_level.initialize(_grid_settings)
 	_current_level.level_name = "New Level"
@@ -2015,6 +2101,14 @@ func _on_new_level() -> void:
 			_current_level.size_y,
 			_current_level.size_z
 		)
+		_current_chunk_set.level_data = _current_level
+		_current_chunk_set.grind_rails.clear()
+		_current_chunk_set.roller_coasters.clear()
+		_current_chunk_set.light_dash_trails.clear()
+	_rails.clear()
+	_coasters.clear()
+	_dash_trails.clear()
+	_update_path_list()
 	_update_chunk_set_selector()
 	
 	# Clear undo history for new level
@@ -2041,22 +2135,55 @@ func _on_load_level() -> void:
 func _load_level_file(path: String) -> void:
 	var res := load(path)
 	if res is XtremeLevelData:
+		_store_current_chunk_set_state()
 		_current_level = res
 		_current_level.initialize(_grid_settings)
-		var size_x := _main_dock.find_child("LevelSizeX", true, false) as SpinBox
-		var size_y := _main_dock.find_child("LevelSizeY", true, false) as SpinBox
-		var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
-		if size_x: size_x.value = _current_level.size_x
-		if size_y: size_y.value = _current_level.size_y
-		if size_z: size_z.value = _current_level.size_z
-		_y_level_spinbox.max_value = _current_level.size_y - 1
+		
+		var manifest_path := _build_manifest_sidecar_path(path)
+		var loaded_manifest: XtremeLevelManifest = null
+		if ResourceLoader.exists(manifest_path):
+			var manifest_res := load(manifest_path)
+			if manifest_res is XtremeLevelManifest:
+				loaded_manifest = manifest_res
+		
+		if loaded_manifest:
+			_current_manifest = loaded_manifest
+			if _current_manifest.chunk_sets.is_empty():
+				var fallback_chunk := XtremeChunkSetData.create_with_defaults(&"main", "Main Path")
+				fallback_chunk.level_data = _current_level
+				fallback_chunk.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+				_current_manifest.add_chunk_set(fallback_chunk)
+			var starting_id := _current_manifest.starting_chunk_set
+			if starting_id == &"":
+				starting_id = _current_manifest.chunk_sets[0].chunk_set_id
+			_current_chunk_set = _current_manifest.get_chunk_set(starting_id)
+			if not _current_chunk_set:
+				_current_chunk_set = _current_manifest.chunk_sets[0]
+			if _current_chunk_set and not _current_chunk_set.level_data:
+				_current_chunk_set.level_data = _current_level
+				_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+			_load_chunk_set_state(_current_chunk_set)
+		else:
+			_current_manifest = XtremeLevelManifest.create_default(&"loaded_level", "Loaded Level")
+			_current_chunk_set = _current_manifest.get_chunk_set(&"main")
+			if _current_chunk_set:
+				_current_chunk_set.level_data = _current_level
+				_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+				_current_chunk_set.grind_rails.clear()
+				_current_chunk_set.roller_coasters.clear()
+				_current_chunk_set.light_dash_trails.clear()
+			_load_chunk_set_state(_current_chunk_set)
+		
+		_update_chunk_set_selector()
+		if _chunk_set_selector and _current_manifest and _current_chunk_set:
+			var selected_idx := _current_manifest.chunk_sets.find(_current_chunk_set)
+			if selected_idx >= 0:
+				_chunk_set_selector.select(selected_idx)
 		
 		_undo_history.clear()
 		_redo_history.clear()
 		
 		_clear_selection()
-		_create_or_update_visualizer()
-		_auto_select_visualizer()
 		_set_status("Loaded: %s" % path.get_file())
 	else:
 		_set_status("Error: Invalid level file")
@@ -2074,11 +2201,24 @@ func _on_save_level() -> void:
 	dialog.popup_centered(Vector2i(800, 600))
 
 func _save_level_file(path: String) -> void:
+	_store_current_chunk_set_state()
 	var err := ResourceSaver.save(_current_level, path)
+	if err == OK and _current_manifest:
+		var manifest_path := _build_manifest_sidecar_path(path)
+		var manifest_err := ResourceSaver.save(_current_manifest, manifest_path)
+		if manifest_err != OK:
+			_set_status("Saved level, but failed to save manifest")
+			return
 	if err == OK:
 		_set_status("Saved: %s" % path.get_file())
 	else:
 		_set_status("Error saving")
+
+
+func _build_manifest_sidecar_path(level_path: String) -> String:
+	var level_dir := level_path.get_base_dir()
+	var level_base := level_path.get_file().get_basename()
+	return level_dir.path_join("%s_manifest.tres" % level_base)
 
 func _on_export_level() -> void:
 	if not _current_level:
@@ -2093,10 +2233,30 @@ func _on_export_level() -> void:
 	dialog.popup_centered(Vector2i(800, 600))
 
 func _export_level_file(path: String) -> void:
+	_store_current_chunk_set_state()
 	var exporter := XtremeLevelExporter.new()
 	exporter.grid_settings = _grid_settings
 	exporter.tile_palette = _current_palette
 	exporter.level_data = _current_level
+	exporter.grind_rails = _copy_rails(_rails)
+	exporter.roller_coasters = _copy_coasters(_coasters)
+	exporter.light_dash_trails = _copy_dash_trails(_dash_trails)
+
+	var mode_option := _main_dock.find_child("ExportMode", true, false) as OptionButton
+	var mode_value := mode_option.get_selected_id() if mode_option else 1
+	if mode_value == 0:
+		exporter.export_mode = XtremeLevelExporter.ExportMode.LEGACY_SINGLE_MESH
+	else:
+		exporter.export_mode = XtremeLevelExporter.ExportMode.HYBRID_CHUNKED
+
+	var chunk_x := _main_dock.find_child("ExportChunkSizeX", true, false) as SpinBox
+	var chunk_y := _main_dock.find_child("ExportChunkSizeY", true, false) as SpinBox
+	var chunk_z := _main_dock.find_child("ExportChunkSizeZ", true, false) as SpinBox
+	exporter.static_chunk_size = Vector3i(
+		int(chunk_x.value) if chunk_x else 16,
+		int(chunk_y.value) if chunk_y else 8,
+		int(chunk_z.value) if chunk_z else 16
+	)
 	
 	# Curved world settings
 	var curve_check := _main_dock.find_child("ExportWithCurve", true, false) as CheckBox
@@ -2137,10 +2297,157 @@ func _on_level_size_changed(_value: float) -> void:
 	var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
 	if size_x and size_y and size_z:
 		_current_level.resize(int(size_x.value), int(size_y.value), int(size_z.value))
+		if _current_chunk_set:
+			_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
 		_y_level_spinbox.max_value = size_y.value - 1
 		if _grid_visualizer:
 			_grid_visualizer.rebuild()
 		_update_grid_lines()
+
+
+func _get_instance_property_targets() -> Array[Vector3i]:
+	var targets: Array[Vector3i] = []
+	if not _current_level:
+		return targets
+
+	var unique := {}
+	if _has_selection:
+		var min_pos := Vector3i(
+			mini(_selection_start.x, _selection_end.x),
+			mini(_selection_start.y, _selection_end.y),
+			mini(_selection_start.z, _selection_end.z)
+		)
+		var max_pos := Vector3i(
+			maxi(_selection_start.x, _selection_end.x),
+			maxi(_selection_start.y, _selection_end.y),
+			maxi(_selection_start.z, _selection_end.z)
+		)
+		for x in range(min_pos.x, max_pos.x + 1):
+			for y in range(min_pos.y, max_pos.y + 1):
+				for z in range(min_pos.z, max_pos.z + 1):
+					var pos := Vector3i(x, y, z)
+					if not _current_level.has_tile(pos):
+						continue
+					var tile_id := _current_level.get_tile(pos)
+					var target_pos := pos
+					if tile_id == &"_multicell_part":
+						target_pos = _find_multicell_anchor(pos)
+					if target_pos.x < 0:
+						continue
+					if target_pos not in unique:
+						unique[target_pos] = true
+						targets.append(target_pos)
+	else:
+		if _last_hover_pos.x < 0 or _last_hover_pos.y < 0 or _last_hover_pos.z < 0:
+			return targets
+		if not _current_level.has_tile(_last_hover_pos):
+			return targets
+		var hovered := _last_hover_pos
+		if _current_level.get_tile(hovered) == &"_multicell_part":
+			hovered = _find_multicell_anchor(hovered)
+		if hovered.x >= 0:
+			targets.append(hovered)
+
+	return targets
+
+
+func _parse_instance_property_value(text: String) -> Variant:
+	var trimmed := text.strip_edges()
+	if trimmed.is_empty():
+		return ""
+
+	var lower := trimmed.to_lower()
+	if lower == "true":
+		return true
+	if lower == "false":
+		return false
+
+	var int_regex := RegEx.new()
+	int_regex.compile("^-?\\d+$")
+	if int_regex.search(trimmed):
+		return int(trimmed)
+
+	var float_regex := RegEx.new()
+	float_regex.compile("^-?\\d+\\.\\d+$")
+	if float_regex.search(trimmed):
+		return float(trimmed)
+
+	if trimmed.begins_with("{") or trimmed.begins_with("["):
+		var json := JSON.new()
+		var parse_err := json.parse(trimmed)
+		if parse_err == OK:
+			return json.data
+
+	return trimmed
+
+
+func _on_set_instance_property() -> void:
+	if not _current_level or not _main_dock:
+		return
+	var key_edit := _main_dock.find_child("InstancePropKey", true, false) as LineEdit
+	var value_edit := _main_dock.find_child("InstancePropValue", true, false) as LineEdit
+	if not key_edit or not value_edit:
+		return
+
+	var key := key_edit.text.strip_edges()
+	if key.is_empty():
+		_set_status("Instance override key cannot be empty")
+		return
+
+	var targets := _get_instance_property_targets()
+	if targets.is_empty():
+		_set_status("Select a tile region or hover a tile to set an override")
+		return
+
+	var value := _parse_instance_property_value(value_edit.text)
+	for pos in targets:
+		var props := _current_level.get_tile_instance_properties(pos)
+		props[key] = value
+		_current_level.set_tile_instance_properties(pos, props)
+
+	_set_status("Set override '%s' on %d tile(s)" % [key, targets.size()])
+
+
+func _on_remove_instance_property() -> void:
+	if not _current_level or not _main_dock:
+		return
+	var key_edit := _main_dock.find_child("InstancePropKey", true, false) as LineEdit
+	if not key_edit:
+		return
+
+	var key := key_edit.text.strip_edges()
+	if key.is_empty():
+		_set_status("Enter a key to remove")
+		return
+
+	var targets := _get_instance_property_targets()
+	if targets.is_empty():
+		_set_status("Select a tile region or hover a tile to remove an override")
+		return
+
+	var changed := 0
+	for pos in targets:
+		var props := _current_level.get_tile_instance_properties(pos)
+		if props.has(key):
+			props.erase(key)
+			_current_level.set_tile_instance_properties(pos, props)
+			changed += 1
+
+	_set_status("Removed override '%s' from %d tile(s)" % [key, changed])
+
+
+func _on_clear_instance_properties() -> void:
+	if not _current_level:
+		return
+	var targets := _get_instance_property_targets()
+	if targets.is_empty():
+		_set_status("Select a tile region or hover a tile to clear overrides")
+		return
+
+	for pos in targets:
+		_current_level.clear_tile_instance_properties(pos)
+
+	_set_status("Cleared all overrides on %d tile(s)" % targets.size())
 
 func _on_curve_toggled(enabled: bool) -> void:
 	if _grid_visualizer:
@@ -2383,6 +2690,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				_is_dragging = true
 				_last_drag_pos = Vector3i(-1, -1, -1)
 				if pos.x >= 0:
+					_last_hover_pos = pos
 					_handle_click_pressed(pos)
 					return AFTER_GUI_INPUT_STOP
 			else:  # Released
@@ -2404,6 +2712,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		var pos := _raycast_grid(from, dir)
 		
 		if pos.x >= 0:
+			_last_hover_pos = pos
 			if _grid_visualizer:
 				_grid_visualizer.set_hover_position(pos)
 			_update_brush_preview(pos)
@@ -2425,6 +2734,8 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			# Update water zone preview while dragging
 			if _water_zone_dragging:
 				_update_water_zone_preview(pos)
+		else:
+			_last_hover_pos = Vector3i(-1, -1, -1)
 	
 	return AFTER_GUI_INPUT_PASS
 
@@ -3034,6 +3345,85 @@ func _input(event: InputEvent) -> void:
 
 # ------------ Chunk Set Management ------------
 
+func _sync_level_size_ui_from_current_level() -> void:
+	if not _current_level or not _main_dock:
+		return
+	var size_x := _main_dock.find_child("LevelSizeX", true, false) as SpinBox
+	var size_y := _main_dock.find_child("LevelSizeY", true, false) as SpinBox
+	var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
+	if size_x:
+		size_x.value = _current_level.size_x
+	if size_y:
+		size_y.value = _current_level.size_y
+	if size_z:
+		size_z.value = _current_level.size_z
+	if _y_level_spinbox:
+		_y_level_spinbox.max_value = maxf(float(_current_level.size_y - 1), 0.0)
+		_current_y_level = clampi(_current_y_level, 0, maxi(_current_level.size_y - 1, 0))
+		_y_level_spinbox.value = _current_y_level
+
+
+func _copy_rails(source: Array[XtremeGrindRail]) -> Array[XtremeGrindRail]:
+	var result: Array[XtremeGrindRail] = []
+	for rail in source:
+		if rail:
+			result.append(rail)
+	return result
+
+
+func _copy_coasters(source: Array[XtremeRollerCoaster]) -> Array[XtremeRollerCoaster]:
+	var result: Array[XtremeRollerCoaster] = []
+	for coaster in source:
+		if coaster:
+			result.append(coaster)
+	return result
+
+
+func _copy_dash_trails(source: Array[XtremeLightDashTrail]) -> Array[XtremeLightDashTrail]:
+	var result: Array[XtremeLightDashTrail] = []
+	for trail in source:
+		if trail:
+			result.append(trail)
+	return result
+
+
+func _store_current_chunk_set_state() -> void:
+	if not _current_chunk_set:
+		return
+	if _current_level:
+		_current_chunk_set.level_data = _current_level
+		_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+	_current_chunk_set.grind_rails = _copy_rails(_rails)
+	_current_chunk_set.roller_coasters = _copy_coasters(_coasters)
+	_current_chunk_set.light_dash_trails = _copy_dash_trails(_dash_trails)
+
+
+func _load_chunk_set_state(chunk_set: XtremeChunkSetData) -> void:
+	if not chunk_set:
+		return
+
+	if chunk_set.level_data:
+		_current_level = chunk_set.level_data
+	else:
+		_current_level = XtremeLevelData.new()
+		_current_level.initialize(_grid_settings)
+		_current_level.resize(chunk_set.size.x, chunk_set.size.y, chunk_set.size.z)
+		_current_level.level_name = chunk_set.display_name
+		chunk_set.level_data = _current_level
+
+	if _current_level:
+		_current_level.initialize(_grid_settings)
+		chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+
+	_rails = _copy_rails(chunk_set.grind_rails)
+	_coasters = _copy_coasters(chunk_set.roller_coasters)
+	_dash_trails = _copy_dash_trails(chunk_set.light_dash_trails)
+	_update_path_list()
+	_sync_level_size_ui_from_current_level()
+	_create_or_update_visualizer()
+	_auto_select_visualizer()
+
+
 func _on_chunk_set_selected(index: int) -> void:
 	if not _current_manifest or index < 0:
 		return
@@ -3042,6 +3432,7 @@ func _on_chunk_set_selected(index: int) -> void:
 	if index >= chunk_ids.size():
 		return
 	
+	_store_current_chunk_set_state()
 	var chunk_id := chunk_ids[index]
 	_load_chunk_set(chunk_id)
 
@@ -3054,18 +3445,10 @@ func _load_chunk_set(chunk_set_id: StringName) -> void:
 		_set_status("Chunk set '%s' not found" % chunk_set_id)
 		return
 	
+	if _current_chunk_set and _current_chunk_set.chunk_set_id != chunk_set_id:
+		_store_current_chunk_set_state()
 	_current_chunk_set = chunk_set
-	
-	# Load the level data for this chunk set (or create new if doesn't exist)
-	if chunk_set.scene_path and FileAccess.file_exists(chunk_set.scene_path):
-		# In a full implementation, load the scene and extract level data
-		pass
-	else:
-		# Create new empty level data for this chunk set
-		if not _current_level:
-			_current_level = XtremeLevelData.new()
-			_current_level.initialize(_grid_settings)
-			_current_level.resize(chunk_set.size.x, chunk_set.size.y, chunk_set.size.z)
+	_load_chunk_set_state(chunk_set)
 	
 	# Update ghost chunk sets if enabled
 	if _ghost_enabled:
@@ -3074,6 +3457,7 @@ func _load_chunk_set(chunk_set_id: StringName) -> void:
 	_set_status("Loaded chunk set: %s" % chunk_set.display_name)
 
 func _on_add_chunk_set() -> void:
+	_store_current_chunk_set_state()
 	if not _current_manifest:
 		# Create a new manifest if none exists
 		_current_manifest = XtremeLevelManifest.create_default(&"new_level", "New Level")
@@ -3088,6 +3472,13 @@ func _on_add_chunk_set() -> void:
 	
 	# Create new chunk set
 	var new_chunk := XtremeChunkSetData.create_with_defaults(new_id, "New Area %d" % counter)
+	if _current_level:
+		new_chunk.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+	var new_level := XtremeLevelData.new()
+	new_level.initialize(_grid_settings)
+	new_level.resize(new_chunk.size.x, new_chunk.size.y, new_chunk.size.z)
+	new_level.level_name = new_chunk.display_name
+	new_chunk.level_data = new_level
 	_current_manifest.add_chunk_set(new_chunk)
 	
 	# Update dropdown
@@ -3656,6 +4047,7 @@ func _on_finish_path() -> void:
 				_set_status("Dash trail needs at least 2 rings")
 	
 	_update_path_list()
+	_store_current_chunk_set_state()
 	_clear_current_path()
 
 func _on_close_path_loop() -> void:

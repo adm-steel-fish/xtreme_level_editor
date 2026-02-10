@@ -33,6 +33,10 @@ var _rotation_data: Dictionary = {}
 ## Key: "x,y,z" string (anchor position), Value: Dictionary with size and occupied cells
 var _multicell_data: Dictionary = {}
 
+## Per-instance tile properties
+## Key: "x,y,z" string, Value: Dictionary of overrides for this tile instance
+var _instance_properties: Dictionary = {}
+
 ## Connection point markers for chunk system
 ## Array of ConnectionPoint data
 @export var connection_points: Array[Dictionary] = []
@@ -59,6 +63,7 @@ func set_tile(pos: Vector3i, tile_id: StringName, rotation: Vector3i = Vector3i.
 		# Remove tile (empty space)
 		_grid_data.erase(key)
 		_rotation_data.erase(key)
+		_instance_properties.erase(key)
 	else:
 		_grid_data[key] = tile_id
 		# Only store rotation if non-zero
@@ -69,6 +74,38 @@ func set_tile(pos: Vector3i, tile_id: StringName, rotation: Vector3i = Vector3i.
 	
 	_update_modified_time()
 	emit_changed()
+
+
+## Set per-instance property overrides for a tile
+func set_tile_instance_properties(pos: Vector3i, properties: Dictionary) -> void:
+	if not _is_valid_position(pos):
+		return
+	var key := _pos_to_key(pos)
+	if properties.is_empty():
+		_instance_properties.erase(key)
+	else:
+		_instance_properties[key] = properties.duplicate(true)
+	_update_modified_time()
+	emit_changed()
+
+
+## Get per-instance property overrides for a tile
+func get_tile_instance_properties(pos: Vector3i) -> Dictionary:
+	if not _is_valid_position(pos):
+		return {}
+	var key := _pos_to_key(pos)
+	return (_instance_properties.get(key, {}) as Dictionary).duplicate(true)
+
+
+## Clear per-instance properties at a tile
+func clear_tile_instance_properties(pos: Vector3i) -> void:
+	if not _is_valid_position(pos):
+		return
+	var key := _pos_to_key(pos)
+	if key in _instance_properties:
+		_instance_properties.erase(key)
+		_update_modified_time()
+		emit_changed()
 
 ## Get the tile ID at grid coordinates
 func get_tile(pos: Vector3i) -> StringName:
@@ -99,6 +136,7 @@ func clear_all() -> void:
 	_grid_data.clear()
 	_rotation_data.clear()
 	_multicell_data.clear()
+	_instance_properties.clear()
 	_update_modified_time()
 	emit_changed()
 
@@ -312,6 +350,7 @@ func resize(new_x: int, new_y: int, new_z: int) -> void:
 	for key in keys_to_remove:
 		_grid_data.erase(key)
 		_rotation_data.erase(key)
+		_instance_properties.erase(key)
 	
 	_update_modified_time()
 	emit_changed()
@@ -385,6 +424,11 @@ func _get_property_list() -> Array[Dictionary]:
 		},
 		{
 			"name": "_multicell_data",
+			"type": TYPE_DICTIONARY,
+			"usage": PROPERTY_USAGE_STORAGE
+		},
+		{
+			"name": "_instance_properties",
 			"type": TYPE_DICTIONARY,
 			"usage": PROPERTY_USAGE_STORAGE
 		}
