@@ -33,6 +33,18 @@ extends Resource
 ## Grind rails authored for this chunk set
 @export var grind_rails: Array[XtremeGrindRail] = []
 
+## Grid-authored rail cells used by the Rail Tools tab.
+## Each entry: {"pos": Vector3i, "rotation": Vector3i, "rail_type": int}
+@export var rail_grid_cells: Array[Dictionary] = []
+
+## Grid-authored auto-trail/coaster cells.
+## Each entry: {"pos": Vector3i, "rotation": Vector3i, "rail_type": int}
+@export var coaster_grid_cells: Array[Dictionary] = []
+
+## Grid-authored light-dash cells.
+## Each entry: {"pos": Vector3i, "rotation": Vector3i, "rail_type": int}
+@export var dash_grid_cells: Array[Dictionary] = []
+
 ## Scripted roller coaster paths authored for this chunk set
 @export var roller_coasters: Array[XtremeRollerCoaster] = []
 

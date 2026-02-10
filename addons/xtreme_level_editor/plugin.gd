@@ -11,6 +11,16 @@ const MAX_UNDO_HISTORY := 10
 # Colors for brush preview
 const BRUSH_COLOR_VALID := Color(0.0, 1.0, 0.5, 0.35)  # Green - can place
 const BRUSH_COLOR_BLOCKED := Color(1.0, 0.2, 0.2, 0.45)  # Red - blocked
+const RAIL_PREVIEW_COLOR := Color(1.0, 0.95, 0.2, 1.0)
+const COASTER_PREVIEW_COLOR := Color(1.0, 0.25, 0.25, 1.0)
+const DASH_PREVIEW_COLOR := Color(0.15, 0.95, 1.0, 1.0)
+const PATH_PREVIEW_SELECTED_MULTIPLIER := 1.35
+const DASH_RING_PREVIEW_SCENE_PATH := "res://addons/xtreme_level_editor/scenes/retro/prefabs/retro_ring.tscn"
+const RAIL_NEIGHBOR_DIRECTIONS: Array[Vector3i] = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+]
 
 # UI Elements
 var _main_dock: Control
@@ -22,6 +32,7 @@ var _context_menu: PopupMenu
 var _rotation_x_spinbox: SpinBox
 var _rotation_y_spinbox: SpinBox
 var _rotation_z_spinbox: SpinBox
+var _tool_tab_container: TabContainer
 
 # Scene elements
 var _grid_visualizer: XtremeGridVisualizer
@@ -127,9 +138,19 @@ var _selected_path_index: int = -1
 # Path preview meshes
 var _path_preview_mesh: MeshInstance3D
 var _path_points_mesh: MeshInstance3D
+var _rail_grid_preview_mesh: MeshInstance3D
+var _coaster_grid_preview_mesh: MeshInstance3D
+var _dash_grid_preview_root: Node3D
 
 # Is path currently being drawn
 var _path_drawing: bool = false
+
+# Grid rail layout authored from the Rail Tools tab.
+# key: "x,y,z", value: {"pos": Vector3i, "rotation": Vector3i, "rail_type": int}
+var _rail_grid_cells: Dictionary = {}
+var _coaster_grid_cells: Dictionary = {}
+var _dash_grid_cells: Dictionary = {}
+var _path_selected_keys: Array[String] = []
 
 func _get_plugin_name() -> String:
 	return PLUGIN_NAME
@@ -158,6 +179,7 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_main_dock)
 		_main_dock.queue_free()
 		_main_dock = null
+	_tool_tab_container = null
 	
 	if _context_menu:
 		_context_menu.queue_free()
@@ -186,6 +208,15 @@ func _cleanup_visualizer() -> void:
 	if _select_preview_mesh and is_instance_valid(_select_preview_mesh):
 		_select_preview_mesh.queue_free()
 		_select_preview_mesh = null
+	if _rail_grid_preview_mesh and is_instance_valid(_rail_grid_preview_mesh):
+		_rail_grid_preview_mesh.queue_free()
+		_rail_grid_preview_mesh = null
+	if _coaster_grid_preview_mesh and is_instance_valid(_coaster_grid_preview_mesh):
+		_coaster_grid_preview_mesh.queue_free()
+		_coaster_grid_preview_mesh = null
+	if _dash_grid_preview_root and is_instance_valid(_dash_grid_preview_root):
+		_dash_grid_preview_root.queue_free()
+		_dash_grid_preview_root = null
 
 func _on_scene_changed(_node: Node) -> void:
 	# When scene changes, clean up any old temp nodes and reset state
@@ -206,6 +237,9 @@ func _on_scene_loaded() -> void:
 	_brush_preview_mesh = null
 	_rect_preview_mesh = null
 	_select_preview_mesh = null
+	_rail_grid_preview_mesh = null
+	_coaster_grid_preview_mesh = null
+	_dash_grid_preview_root = null
 	
 	# Check if there's saved level data we should offer to load
 	# (This would be a .tres file, not embedded nodes)
@@ -476,6 +510,7 @@ func _create_editor_dock() -> void:
 	tab_container.name = "ToolTabs"
 	tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_main_dock.add_child(tab_container)
+	_tool_tab_container = tab_container
 	
 	# Create Level Tools tab
 	var level_tools := _create_level_tools_tab()
@@ -1182,6 +1217,52 @@ func _create_rail_tools_tab() -> Control:
 	dash_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	path_type_row.add_child(dash_btn)
 	content.add_child(path_type_row)
+
+	content.add_child(HSeparator.new())
+
+	# Grid Path Builder (tile-style placement that auto-connects into runtime paths)
+	content.add_child(_make_label("Grid Path Builder"))
+
+	var rail_build_toggle := CheckBox.new()
+	rail_build_toggle.name = "RailGridEnabled"
+	rail_build_toggle.text = "Enable Grid Path Placement"
+	rail_build_toggle.button_pressed = true
+	rail_build_toggle.toggled.connect(_on_rail_grid_enabled_toggled)
+	content.add_child(rail_build_toggle)
+
+	var rail_type_row := HBoxContainer.new()
+	rail_type_row.add_child(_make_label("Object Type:"))
+	var rail_type_selector := OptionButton.new()
+	rail_type_selector.name = "RailObjectSelector"
+	rail_type_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rail_type_selector.add_item("Default Rail", 0)
+	rail_type_selector.selected = 0
+	rail_type_row.add_child(rail_type_selector)
+	content.add_child(rail_type_row)
+
+	var rail_connect_check := CheckBox.new()
+	rail_connect_check.name = "RailAutoConnect"
+	rail_connect_check.text = "Auto-connect adjacent segments"
+	rail_connect_check.button_pressed = true
+	rail_connect_check.toggled.connect(func(_enabled: bool): _rebuild_paths_from_active_grid(true))
+	content.add_child(rail_connect_check)
+
+	var rail_hint := Label.new()
+	rail_hint.text = "Place: Left Click/Drag  |  Erase: Shift + Left Click/Drag  |  Rotate: R / Shift+R / Ctrl+R"
+	rail_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rail_hint.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
+	content.add_child(rail_hint)
+
+	var rail_actions := HBoxContainer.new()
+	var rail_rebuild_btn := Button.new()
+	rail_rebuild_btn.text = "Rebuild Rails"
+	rail_rebuild_btn.pressed.connect(_on_rebuild_rail_grid_pressed)
+	rail_actions.add_child(rail_rebuild_btn)
+	var rail_clear_btn := Button.new()
+	rail_clear_btn.text = "Clear Rails"
+	rail_clear_btn.pressed.connect(_on_clear_rail_grid_pressed)
+	rail_actions.add_child(rail_clear_btn)
+	content.add_child(rail_actions)
 	
 	content.add_child(HSeparator.new())
 	
@@ -2102,9 +2183,16 @@ func _on_new_level() -> void:
 			_current_level.size_z
 		)
 		_current_chunk_set.level_data = _current_level
+		_current_chunk_set.rail_grid_cells.clear()
+		_current_chunk_set.coaster_grid_cells.clear()
+		_current_chunk_set.dash_grid_cells.clear()
 		_current_chunk_set.grind_rails.clear()
 		_current_chunk_set.roller_coasters.clear()
 		_current_chunk_set.light_dash_trails.clear()
+	_rail_grid_cells.clear()
+	_coaster_grid_cells.clear()
+	_dash_grid_cells.clear()
+	_path_selected_keys.clear()
 	_rails.clear()
 	_coasters.clear()
 	_dash_trails.clear()
@@ -2169,6 +2257,9 @@ func _load_level_file(path: String) -> void:
 			if _current_chunk_set:
 				_current_chunk_set.level_data = _current_level
 				_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+				_current_chunk_set.rail_grid_cells.clear()
+				_current_chunk_set.coaster_grid_cells.clear()
+				_current_chunk_set.dash_grid_cells.clear()
 				_current_chunk_set.grind_rails.clear()
 				_current_chunk_set.roller_coasters.clear()
 				_current_chunk_set.light_dash_trails.clear()
@@ -2534,6 +2625,7 @@ func _create_or_update_visualizer() -> void:
 	_create_brush_preview(scene_root)
 	_create_rect_preview(scene_root)
 	_create_select_preview(scene_root)
+	_rebuild_path_grid_previews()
 
 func _create_grid_lines(parent: Node) -> void:
 	_grid_lines_mesh = MeshInstance3D.new()
@@ -2691,10 +2783,18 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				_last_drag_pos = Vector3i(-1, -1, -1)
 				if pos.x >= 0:
 					_last_hover_pos = pos
+					if _is_path_grid_mode_active():
+						_handle_path_grid_click_pressed(pos)
+						_last_drag_pos = pos
+						return AFTER_GUI_INPUT_STOP
 					_handle_click_pressed(pos)
 					return AFTER_GUI_INPUT_STOP
 			else:  # Released
 				_is_dragging = false
+				if _is_path_grid_mode_active():
+					if _path_tool_mode == 1 and _select_dragging:
+						_handle_path_grid_select_release(pos)
+					return AFTER_GUI_INPUT_STOP
 				if _rect_dragging:
 					_handle_rect_release(pos)
 					return AFTER_GUI_INPUT_STOP
@@ -2716,6 +2816,12 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			if _grid_visualizer:
 				_grid_visualizer.set_hover_position(pos)
 			_update_brush_preview(pos)
+
+			if _is_dragging and _is_path_grid_mode_active():
+				if pos != _last_drag_pos:
+					_handle_path_grid_drag(pos)
+					_last_drag_pos = pos
+				return AFTER_GUI_INPUT_STOP
 			
 			# Handle drag painting/erasing
 			if _is_dragging and (_edit_mode == 0 or _edit_mode == 1):
@@ -3387,12 +3493,140 @@ func _copy_dash_trails(source: Array[XtremeLightDashTrail]) -> Array[XtremeLight
 	return result
 
 
+func _rail_pos_to_key(pos: Vector3i) -> String:
+	return "%d,%d,%d" % [pos.x, pos.y, pos.z]
+
+
+func _rail_key_to_pos(key: String) -> Vector3i:
+	var parts := key.split(",")
+	if parts.size() != 3:
+		return Vector3i.ZERO
+	return Vector3i(parts[0].to_int(), parts[1].to_int(), parts[2].to_int())
+
+
+func _serialize_path_grid_cells(cells: Dictionary) -> Array[Dictionary]:
+	var serialized: Array[Dictionary] = []
+	for key in cells.keys():
+		var cell_data := cells.get(key, {}) as Dictionary
+		var pos: Vector3i = cell_data.get("pos", _rail_key_to_pos(key)) as Vector3i
+		var rotation: Vector3i = cell_data.get("rotation", Vector3i.ZERO) as Vector3i
+		var rail_type: int = int(cell_data.get("rail_type", 0))
+		serialized.append({
+			"pos": pos,
+			"rotation": rotation,
+			"rail_type": rail_type
+		})
+	return serialized
+
+
+func _deserialize_path_grid_cells(serialized: Array[Dictionary]) -> Dictionary:
+	var cells: Dictionary = {}
+	for entry in serialized:
+		var pos: Vector3i = entry.get("pos", Vector3i(-1, -1, -1)) as Vector3i
+		if pos.x < 0 or pos.y < 0 or pos.z < 0:
+			continue
+		cells[_rail_pos_to_key(pos)] = {
+			"pos": pos,
+			"rotation": entry.get("rotation", Vector3i.ZERO),
+			"rail_type": int(entry.get("rail_type", 0)),
+		}
+	return cells
+
+
+func _serialize_rail_grid_cells() -> Array[Dictionary]:
+	return _serialize_path_grid_cells(_rail_grid_cells)
+
+
+func _serialize_coaster_grid_cells() -> Array[Dictionary]:
+	return _serialize_path_grid_cells(_coaster_grid_cells)
+
+
+func _serialize_dash_grid_cells() -> Array[Dictionary]:
+	return _serialize_path_grid_cells(_dash_grid_cells)
+
+
+func _deserialize_rail_grid_cells(serialized: Array[Dictionary]) -> void:
+	_rail_grid_cells = _deserialize_path_grid_cells(serialized)
+
+
+func _deserialize_coaster_grid_cells(serialized: Array[Dictionary]) -> void:
+	_coaster_grid_cells = _deserialize_path_grid_cells(serialized)
+
+
+func _deserialize_dash_grid_cells(serialized: Array[Dictionary]) -> void:
+	_dash_grid_cells = _deserialize_path_grid_cells(serialized)
+
+
+func _populate_rail_grid_from_existing_rails() -> void:
+	if _rails.is_empty():
+		return
+	for rail in _rails:
+		if not rail:
+			continue
+		for point in rail.control_points:
+			var cell := Vector3i(roundi(point.x), roundi(point.y), roundi(point.z))
+			if cell.x < 0 or cell.y < 0 or cell.z < 0:
+				continue
+			var key := _rail_pos_to_key(cell)
+			if key not in _rail_grid_cells:
+				_rail_grid_cells[key] = {
+					"pos": cell,
+					"rotation": Vector3i.ZERO,
+					"rail_type": 0,
+				}
+
+
+func _populate_coaster_grid_from_existing_coasters() -> void:
+	if _coasters.is_empty():
+		return
+	var cell_size := _grid_settings.get_cell_size() if _grid_settings else Vector3(2, 2, 2)
+	for coaster in _coasters:
+		if not coaster:
+			continue
+		for point in coaster.control_points:
+			var cell := Vector3i(
+				floori(point.x / cell_size.x),
+				floori(point.y / cell_size.y),
+				floori(point.z / cell_size.z)
+			)
+			if cell.x < 0 or cell.y < 0 or cell.z < 0:
+				continue
+			var key := _rail_pos_to_key(cell)
+			if key not in _coaster_grid_cells:
+				_coaster_grid_cells[key] = {
+					"pos": cell,
+					"rotation": Vector3i.ZERO,
+					"rail_type": 0,
+				}
+
+
+func _populate_dash_grid_from_existing_trails() -> void:
+	if _dash_trails.is_empty():
+		return
+	for trail in _dash_trails:
+		if not trail:
+			continue
+		for cell in trail.ring_positions:
+			if cell.x < 0 or cell.y < 0 or cell.z < 0:
+				continue
+			var key := _rail_pos_to_key(cell)
+			if key not in _dash_grid_cells:
+				_dash_grid_cells[key] = {
+					"pos": cell,
+					"rotation": Vector3i.ZERO,
+					"rail_type": 0,
+				}
+
+
 func _store_current_chunk_set_state() -> void:
 	if not _current_chunk_set:
 		return
 	if _current_level:
 		_current_chunk_set.level_data = _current_level
 		_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
+	_current_chunk_set.rail_grid_cells = _serialize_rail_grid_cells()
+	_current_chunk_set.coaster_grid_cells = _serialize_coaster_grid_cells()
+	_current_chunk_set.dash_grid_cells = _serialize_dash_grid_cells()
 	_current_chunk_set.grind_rails = _copy_rails(_rails)
 	_current_chunk_set.roller_coasters = _copy_coasters(_coasters)
 	_current_chunk_set.light_dash_trails = _copy_dash_trails(_dash_trails)
@@ -3418,7 +3652,20 @@ func _load_chunk_set_state(chunk_set: XtremeChunkSetData) -> void:
 	_rails = _copy_rails(chunk_set.grind_rails)
 	_coasters = _copy_coasters(chunk_set.roller_coasters)
 	_dash_trails = _copy_dash_trails(chunk_set.light_dash_trails)
+	_deserialize_rail_grid_cells(chunk_set.rail_grid_cells)
+	_deserialize_coaster_grid_cells(chunk_set.coaster_grid_cells)
+	_deserialize_dash_grid_cells(chunk_set.dash_grid_cells)
+	if _rail_grid_cells.is_empty():
+		_populate_rail_grid_from_existing_rails()
+	if _coaster_grid_cells.is_empty():
+		_populate_coaster_grid_from_existing_coasters()
+	if _dash_grid_cells.is_empty():
+		_populate_dash_grid_from_existing_trails()
+	_rebuild_rails_from_grid_cells()
+	_rebuild_coasters_from_grid_cells()
+	_rebuild_dash_trails_from_grid_cells()
 	_update_path_list()
+	_rebuild_path_grid_previews()
 	_sync_level_size_ui_from_current_level()
 	_create_or_update_visualizer()
 	_auto_select_visualizer()
@@ -3931,15 +4178,808 @@ func _auto_configure_spawn_tile(pos: Vector3i, tile_id: StringName) -> void:
 #    - Geometry should keep collision on non-ride sides so it behaves like real level architecture.
 #    - Automatically jumps player off at end of path.
 
+func _is_path_grid_mode_active() -> bool:
+	if not _editing_enabled or not _main_dock:
+		return false
+	if not _tool_tab_container or _tool_tab_container.current_tab != 1:
+		return false
+	var enabled := _main_dock.find_child("RailGridEnabled", true, false) as CheckBox
+	return enabled != null and enabled.button_pressed
+
+
+func _is_rail_grid_mode_active() -> bool:
+	# Backward-compatible wrapper for older call sites.
+	return _is_path_grid_mode_active()
+
+
+func _get_path_type_name(mode: int = -1) -> String:
+	var resolved_mode := mode if mode >= 0 else _path_edit_mode
+	match resolved_mode:
+		0:
+			return "Rail"
+		1:
+			return "Coaster"
+		2:
+			return "Dash"
+		_:
+			return "Path"
+
+
+func _is_rail_auto_connect_enabled() -> bool:
+	if not _main_dock:
+		return true
+	var auto_connect := _main_dock.find_child("RailAutoConnect", true, false) as CheckBox
+	return auto_connect == null or auto_connect.button_pressed
+
+
+func _get_selected_rail_object_type() -> int:
+	if not _main_dock:
+		return 0
+	var selector := _main_dock.find_child("RailObjectSelector", true, false) as OptionButton
+	if not selector:
+		return 0
+	return selector.get_selected_id()
+
+
+func _get_active_path_grid_cells() -> Dictionary:
+	return _get_path_grid_cells_for_mode(_path_edit_mode)
+
+
+func _set_active_path_grid_cells(cells: Dictionary) -> void:
+	_set_path_grid_cells_for_mode(_path_edit_mode, cells)
+
+
+func _get_path_grid_cells_for_mode(mode: int) -> Dictionary:
+	match mode:
+		1:
+			return _coaster_grid_cells
+		2:
+			return _dash_grid_cells
+		_:
+			return _rail_grid_cells
+
+
+func _set_path_grid_cells_for_mode(mode: int, cells: Dictionary) -> void:
+	match mode:
+		1:
+			_coaster_grid_cells = cells
+		2:
+			_dash_grid_cells = cells
+		_:
+			_rail_grid_cells = cells
+
+
+func _on_rail_grid_enabled_toggled(_enabled: bool) -> void:
+	_rebuild_path_grid_previews()
+	_set_status("Grid path placement %s" % ("enabled" if _is_path_grid_mode_active() else "disabled"))
+
+
+func _on_rebuild_rail_grid_pressed() -> void:
+	_rebuild_paths_from_active_grid(true)
+
+
+func _on_clear_rail_grid_pressed() -> void:
+	match _path_edit_mode:
+		0:
+			_rail_grid_cells.clear()
+			_rails.clear()
+		1:
+			_coaster_grid_cells.clear()
+			_coasters.clear()
+		2:
+			_dash_grid_cells.clear()
+			_dash_trails.clear()
+	_path_selected_keys.clear()
+	_update_path_list()
+	_rebuild_path_grid_previews()
+	_store_current_chunk_set_state()
+	_set_status("Cleared all grid %s paths" % _get_path_type_name().to_lower())
+
+
+func _handle_path_grid_click_pressed(pos: Vector3i) -> void:
+	match _path_tool_mode:
+		0:
+			var erase := Input.is_key_pressed(KEY_SHIFT)
+			_apply_path_grid_brush_at(pos, erase)
+		1:
+			_selection_start = pos
+			_select_dragging = true
+			_update_select_preview(pos)
+			_set_status("Path Select: Drag to select %s cells" % _get_path_type_name().to_lower())
+		2:
+			_set_status("Path Edit mode is reserved for future point editing")
+		3:
+			_delete_path_grid_at(pos)
+
+
+func _handle_path_grid_drag(pos: Vector3i) -> void:
+	match _path_tool_mode:
+		0:
+			var erase := Input.is_key_pressed(KEY_SHIFT)
+			_apply_path_grid_brush_at(pos, erase)
+		1:
+			_update_select_preview(pos)
+		3:
+			_delete_path_grid_at(pos)
+
+
+func _handle_path_grid_select_release(pos: Vector3i) -> void:
+	_select_dragging = false
+	if _select_preview_mesh:
+		_select_preview_mesh.visible = false
+	if pos.x < 0:
+		pos = _selection_start
+	_path_selected_keys = _collect_path_grid_keys_in_box(_selection_start, pos)
+	_rebuild_path_grid_previews()
+	if _path_selected_keys.is_empty():
+		_set_status("No %s cells selected" % _get_path_type_name().to_lower())
+	else:
+		_set_status("Selected %d %s cell(s)" % [_path_selected_keys.size(), _get_path_type_name().to_lower()])
+
+
+func _apply_path_grid_brush_at(pos: Vector3i, erase: bool) -> void:
+	var cells := _get_active_path_grid_cells()
+	var key := _rail_pos_to_key(pos)
+	if erase:
+		if key in cells:
+			cells.erase(key)
+			_path_selected_keys.erase(key)
+			_set_active_path_grid_cells(cells)
+			_rebuild_paths_from_active_grid()
+		return
+
+	var new_cell := {
+		"pos": pos,
+		"rotation": _current_rotation,
+		"rail_type": _get_selected_rail_object_type(),
+	}
+	var existing: Dictionary = cells.get(key, {}) as Dictionary
+	var existing_rotation: Vector3i = existing.get("rotation", Vector3i(-99, -99, -99)) as Vector3i
+	var existing_rail_type: int = int(existing.get("rail_type", -1))
+	var new_rail_type: int = int(new_cell["rail_type"])
+	var changed: bool = existing_rotation != _current_rotation
+	changed = changed or existing_rail_type != new_rail_type
+	if key not in cells:
+		changed = true
+	cells[key] = new_cell
+	_set_active_path_grid_cells(cells)
+	if changed:
+		_rebuild_paths_from_active_grid()
+
+
+func _delete_path_grid_at(pos: Vector3i) -> void:
+	var cells := _get_active_path_grid_cells()
+	if cells.is_empty():
+		return
+
+	var keys_to_remove: Array[String] = []
+	if not _path_selected_keys.is_empty():
+		for selected_key in _path_selected_keys:
+			if selected_key in cells:
+				keys_to_remove.append(selected_key)
+	else:
+		var key := _rail_pos_to_key(pos)
+		if key not in cells:
+			return
+		keys_to_remove = _collect_connected_path_keys(key, cells)
+
+	if keys_to_remove.is_empty():
+		return
+
+	for key in keys_to_remove:
+		cells.erase(key)
+		_path_selected_keys.erase(key)
+	_set_active_path_grid_cells(cells)
+	_rebuild_paths_from_active_grid()
+	_set_status("Deleted %d %s cell(s)" % [keys_to_remove.size(), _get_path_type_name().to_lower()])
+
+
+func _collect_path_grid_keys_in_box(start_pos: Vector3i, end_pos: Vector3i) -> Array[String]:
+	var min_x := mini(start_pos.x, end_pos.x)
+	var max_x := maxi(start_pos.x, end_pos.x)
+	var min_y := mini(start_pos.y, end_pos.y)
+	var max_y := maxi(start_pos.y, end_pos.y)
+	var min_z := mini(start_pos.z, end_pos.z)
+	var max_z := maxi(start_pos.z, end_pos.z)
+
+	var selected: Array[String] = []
+	var cells := _get_active_path_grid_cells()
+	for key_variant in cells.keys():
+		var key := str(key_variant)
+		var cell_data := cells.get(key, {}) as Dictionary
+		var cell_pos: Vector3i = cell_data.get("pos", _rail_key_to_pos(key)) as Vector3i
+		if cell_pos.x < min_x or cell_pos.x > max_x:
+			continue
+		if cell_pos.y < min_y or cell_pos.y > max_y:
+			continue
+		if cell_pos.z < min_z or cell_pos.z > max_z:
+			continue
+		selected.append(key)
+
+	return selected
+
+
+func _collect_connected_path_keys(start_key: String, cells: Dictionary) -> Array[String]:
+	if start_key not in cells:
+		return []
+
+	var adjacency := _build_path_adjacency(cells)
+	var visited := {}
+	var queue: Array[String] = [start_key]
+	var result: Array[String] = []
+
+	while not queue.is_empty():
+		var key := queue.pop_front()
+		if key in visited:
+			continue
+		visited[key] = true
+		result.append(key)
+		var neighbors := adjacency.get(key, []) as Array
+		for neighbor_variant in neighbors:
+			var neighbor_key := str(neighbor_variant)
+			if neighbor_key not in visited:
+				queue.append(neighbor_key)
+
+	return result
+
+
+func _rebuild_paths_from_active_grid(show_status: bool = false) -> void:
+	match _path_edit_mode:
+		0:
+			_rebuild_rails_from_grid_cells(show_status)
+		1:
+			_rebuild_coasters_from_grid_cells(show_status)
+		2:
+			_rebuild_dash_trails_from_grid_cells(show_status)
+
+
+func _rotation_to_rail_axis(rotation: Vector3i) -> Vector3i:
+	var basis := Basis.from_euler(Vector3(
+		rotation.x * PI / 2.0,
+		rotation.y * PI / 2.0,
+		rotation.z * PI / 2.0
+	))
+	var axis_f := basis * Vector3.FORWARD
+	var axis := Vector3i(roundi(axis_f.x), roundi(axis_f.y), roundi(axis_f.z))
+	if axis == Vector3i.ZERO:
+		axis = Vector3i(0, 0, 1)
+	return axis
+
+
+func _get_path_cell_connection_dirs(pos: Vector3i, cell_data: Dictionary, cells: Dictionary) -> Array[Vector3i]:
+	var dirs: Array[Vector3i] = []
+	var axis_rotation: Vector3i = cell_data.get("rotation", Vector3i.ZERO) as Vector3i
+	var axis := _rotation_to_rail_axis(axis_rotation)
+	dirs.append(axis)
+	dirs.append(-axis)
+
+	if _is_rail_auto_connect_enabled():
+		for dir in RAIL_NEIGHBOR_DIRECTIONS:
+			var neighbor_key := _rail_pos_to_key(pos + dir)
+			if neighbor_key in cells and dir not in dirs:
+				dirs.append(dir)
+
+	return dirs
+
+
+func _rail_edge_key(a: String, b: String) -> String:
+	return "%s|%s" % [a, b] if a < b else "%s|%s" % [b, a]
+
+
+func _build_path_adjacency(cells: Dictionary) -> Dictionary:
+	var adjacency: Dictionary = {}
+	for key_variant in cells.keys():
+		adjacency[str(key_variant)] = []
+
+	for key_variant in cells.keys():
+		var key := str(key_variant)
+		var cell_data := cells.get(key, {}) as Dictionary
+		var pos: Vector3i = cell_data.get("pos", _rail_key_to_pos(key)) as Vector3i
+		var dirs := _get_path_cell_connection_dirs(pos, cell_data, cells)
+
+		for dir in dirs:
+			var neighbor_pos := pos + dir
+			var neighbor_key := _rail_pos_to_key(neighbor_pos)
+			if neighbor_key not in cells:
+				continue
+			var neighbor_data := cells.get(neighbor_key, {}) as Dictionary
+			var neighbor_dirs := _get_path_cell_connection_dirs(neighbor_pos, neighbor_data, cells)
+			if -dir not in neighbor_dirs:
+				continue
+
+			var neighbors := adjacency.get(key, []) as Array
+			if neighbor_key not in neighbors:
+				neighbors.append(neighbor_key)
+				adjacency[key] = neighbors
+
+			var reverse_neighbors := adjacency.get(neighbor_key, []) as Array
+			if key not in reverse_neighbors:
+				reverse_neighbors.append(key)
+				adjacency[neighbor_key] = reverse_neighbors
+
+	return adjacency
+
+
+func _build_rail_adjacency() -> Dictionary:
+	return _build_path_adjacency(_rail_grid_cells)
+
+
+func _extract_rail_paths_from_adjacency(adjacency: Dictionary) -> Array:
+	var paths: Array = []
+	var visited_edges := {}
+
+	# Open chains (start/end/junction nodes).
+	for start_variant in adjacency.keys():
+		var start_key := str(start_variant)
+		var start_neighbors := adjacency.get(start_key, []) as Array
+		if start_neighbors.size() == 2:
+			continue
+		for next_variant in start_neighbors:
+			var next_key := str(next_variant)
+			var edge_key := _rail_edge_key(start_key, next_key)
+			if edge_key in visited_edges:
+				continue
+
+			var path: Array = [start_key]
+			var prev_key := start_key
+			var curr_key := next_key
+			while true:
+				visited_edges[_rail_edge_key(prev_key, curr_key)] = true
+				path.append(curr_key)
+
+				var neighbors := adjacency.get(curr_key, []) as Array
+				var candidates: Array[String] = []
+				for neighbor_variant in neighbors:
+					var neighbor_key := str(neighbor_variant)
+					if neighbor_key != prev_key:
+						candidates.append(neighbor_key)
+
+				if candidates.size() != 1:
+					break
+
+				var next_chain_key := candidates[0]
+				if _rail_edge_key(curr_key, next_chain_key) in visited_edges:
+					break
+				prev_key = curr_key
+				curr_key = next_chain_key
+
+			if path.size() >= 2:
+				paths.append(path)
+
+	# Closed loops (all degree-2 nodes).
+	for start_variant in adjacency.keys():
+		var start_key := str(start_variant)
+		var neighbors := adjacency.get(start_key, []) as Array
+		for next_variant in neighbors:
+			var next_key := str(next_variant)
+			var start_edge := _rail_edge_key(start_key, next_key)
+			if start_edge in visited_edges:
+				continue
+
+			var loop_path: Array = [start_key]
+			var prev_key := start_key
+			var curr_key := next_key
+			while true:
+				visited_edges[_rail_edge_key(prev_key, curr_key)] = true
+				loop_path.append(curr_key)
+
+				var curr_neighbors := adjacency.get(curr_key, []) as Array
+				var next_candidates: Array[String] = []
+				for candidate_variant in curr_neighbors:
+					var candidate_key := str(candidate_variant)
+					if candidate_key != prev_key:
+						next_candidates.append(candidate_key)
+
+				if next_candidates.is_empty():
+					break
+
+				var pick := next_candidates[0]
+				if next_candidates.size() > 1:
+					for candidate in next_candidates:
+						if _rail_edge_key(curr_key, candidate) not in visited_edges:
+							pick = candidate
+							break
+
+				if pick == start_key:
+					visited_edges[_rail_edge_key(curr_key, start_key)] = true
+					loop_path.append(start_key)
+					break
+
+				var next_edge := _rail_edge_key(curr_key, pick)
+				if next_edge in visited_edges:
+					break
+
+				prev_key = curr_key
+				curr_key = pick
+
+			if loop_path.size() >= 3:
+				paths.append(loop_path)
+
+	return paths
+
+
+func _apply_grid_rail_defaults(rail: XtremeGrindRail) -> void:
+	if not _main_dock:
+		return
+	var speed_spin := _main_dock.find_child("RailSpeedSpin", true, false) as SpinBox
+	var allow_jump := _main_dock.find_child("RailAllowJump", true, false) as CheckBox
+	var allow_crouch := _main_dock.find_child("RailAllowCrouch", true, false) as CheckBox
+	if speed_spin:
+		rail.speed_multiplier = speed_spin.value
+	if allow_jump:
+		rail.allow_jump_off = allow_jump.button_pressed
+	if allow_crouch:
+		rail.allow_crouch_boost = allow_crouch.button_pressed
+
+
+func _apply_grid_coaster_defaults(coaster: XtremeRollerCoaster) -> void:
+	if not _main_dock:
+		return
+	var speed_spin := _main_dock.find_child("CoasterSpeedSpin", true, false) as SpinBox
+	var locked := _main_dock.find_child("CoasterLocked", true, false) as CheckBox
+	if speed_spin:
+		coaster.base_speed = speed_spin.value
+	if locked:
+		coaster.locked_ride = locked.button_pressed
+
+
+func _apply_grid_dash_defaults(trail: XtremeLightDashTrail) -> void:
+	if not _main_dock:
+		return
+	var speed_spin := _main_dock.find_child("DashSpeedSpin", true, false) as SpinBox
+	var dedicated := _main_dock.find_child("DashDedicated", true, false) as CheckBox
+	var works_regular := _main_dock.find_child("DashWorksRegular", true, false) as CheckBox
+	if speed_spin:
+		trail.dash_speed = speed_spin.value
+	if works_regular:
+		trail.works_with_regular_rings = works_regular.button_pressed
+	if dedicated:
+		trail.dedicated_rings_visible = dedicated.button_pressed
+
+
+func _rebuild_rails_from_grid_cells(show_status: bool = false) -> void:
+	var adjacency := _build_path_adjacency(_rail_grid_cells)
+	_rails.clear()
+
+	if adjacency.is_empty():
+		_update_path_list()
+		_rebuild_path_grid_previews()
+		_store_current_chunk_set_state()
+		if show_status:
+			_set_status("No connected rail cells")
+		return
+
+	var path_keys: Array = _extract_rail_paths_from_adjacency(adjacency)
+	var rail_index := 0
+	for key_path_variant in path_keys:
+		var key_path: Array = key_path_variant as Array
+		if key_path.size() < 2:
+			continue
+		var rail := XtremeGrindRail.new()
+		rail.rail_id = StringName("grid_rail_%d" % rail_index)
+		rail.display_name = "Grid Rail %d" % (rail_index + 1)
+		for key_variant in key_path:
+			var key := str(key_variant)
+			var cell := _rail_key_to_pos(key)
+			rail.control_points.append(Vector3(cell.x, cell.y, cell.z))
+		rail.is_loop = key_path.size() >= 3 and str(key_path[0]) == str(key_path[key_path.size() - 1])
+		_apply_grid_rail_defaults(rail)
+		if _grid_settings:
+			rail.calculate_occupied_cells(_grid_settings.get_cell_size())
+		_rails.append(rail)
+		rail_index += 1
+
+	_update_path_list()
+	_rebuild_path_grid_previews()
+	_store_current_chunk_set_state()
+	if show_status:
+		_set_status("Built %d rail path(s) from %d rail cell(s)" % [_rails.size(), _rail_grid_cells.size()])
+
+
+func _rebuild_coasters_from_grid_cells(show_status: bool = false) -> void:
+	var adjacency := _build_path_adjacency(_coaster_grid_cells)
+	_coasters.clear()
+
+	if adjacency.is_empty():
+		_update_path_list()
+		_rebuild_path_grid_previews()
+		_store_current_chunk_set_state()
+		if show_status:
+			_set_status("No connected coaster cells")
+		return
+
+	var path_keys: Array = _extract_rail_paths_from_adjacency(adjacency)
+	var coaster_index := 0
+	for key_path_variant in path_keys:
+		var key_path: Array = key_path_variant as Array
+		if key_path.size() < 2:
+			continue
+		var coaster := XtremeRollerCoaster.new()
+		coaster.coaster_id = StringName("grid_coaster_%d" % coaster_index)
+		coaster.display_name = "Grid Coaster %d" % (coaster_index + 1)
+		var is_loop: bool = key_path.size() >= 3 and str(key_path[0]) == str(key_path[key_path.size() - 1])
+		var stop_index: int = key_path.size()
+		if is_loop:
+			stop_index -= 1
+		for i in range(stop_index):
+			var key := str(key_path[i])
+			var cell := _rail_key_to_pos(key)
+			coaster.control_points.append(_rail_cell_to_world_center(cell))
+		if coaster.control_points.size() < 2:
+			continue
+		coaster.is_loop = is_loop
+		coaster.entry_position = coaster.control_points[0]
+		coaster.exit_position = coaster.control_points[coaster.control_points.size() - 1]
+		_apply_grid_coaster_defaults(coaster)
+		coaster.calculate_duration()
+		_coasters.append(coaster)
+		coaster_index += 1
+
+	_update_path_list()
+	_rebuild_path_grid_previews()
+	_store_current_chunk_set_state()
+	if show_status:
+		_set_status("Built %d coaster path(s) from %d coaster cell(s)" % [_coasters.size(), _coaster_grid_cells.size()])
+
+
+func _rebuild_dash_trails_from_grid_cells(show_status: bool = false) -> void:
+	var adjacency := _build_path_adjacency(_dash_grid_cells)
+	_dash_trails.clear()
+
+	if adjacency.is_empty():
+		_update_path_list()
+		_rebuild_path_grid_previews()
+		_store_current_chunk_set_state()
+		if show_status:
+			_set_status("No connected dash cells")
+		return
+
+	var dedicated := true
+	var dedicated_check: CheckBox = null
+	if _main_dock:
+		dedicated_check = _main_dock.find_child("DashDedicated", true, false) as CheckBox
+	if dedicated_check:
+		dedicated = dedicated_check.button_pressed
+
+	var path_keys: Array = _extract_rail_paths_from_adjacency(adjacency)
+	var trail_index := 0
+	for key_path_variant in path_keys:
+		var key_path: Array = key_path_variant as Array
+		if key_path.size() < 2:
+			continue
+		var trail := XtremeLightDashTrail.new()
+		trail.trail_id = StringName("grid_dash_%d" % trail_index)
+		trail.display_name = "Grid Dash %d" % (trail_index + 1)
+		var is_loop: bool = key_path.size() >= 3 and str(key_path[0]) == str(key_path[key_path.size() - 1])
+		var stop_index: int = key_path.size()
+		if is_loop:
+			stop_index -= 1
+		for i in range(stop_index):
+			var key := str(key_path[i])
+			var cell := _rail_key_to_pos(key)
+			if cell not in trail.ring_positions:
+				trail.add_ring(cell, dedicated)
+		if trail.ring_positions.size() < 2:
+			continue
+		trail.is_loop = is_loop
+		_apply_grid_dash_defaults(trail)
+		trail.auto_fill_gaps()
+		_dash_trails.append(trail)
+		trail_index += 1
+
+	_update_path_list()
+	_rebuild_path_grid_previews()
+	_store_current_chunk_set_state()
+	if show_status:
+		_set_status("Built %d dash path(s) from %d dash cell(s)" % [_dash_trails.size(), _dash_grid_cells.size()])
+
+
+func _rail_cell_to_world_center(pos: Vector3i) -> Vector3:
+	if not _grid_settings:
+		return Vector3(pos)
+	var cell_size := _grid_settings.get_cell_size()
+	return Vector3(
+		pos.x * cell_size.x + cell_size.x * 0.5,
+		pos.y * cell_size.y + cell_size.y * 0.5,
+		pos.z * cell_size.z + cell_size.z * 0.5
+	)
+
+
+func _append_path_adjacency_lines(line_mesh: ImmediateMesh, adjacency: Dictionary, base_color: Color, selected_set: Dictionary) -> void:
+	for key_variant in adjacency.keys():
+		var key := str(key_variant)
+		var from_pos := _rail_cell_to_world_center(_rail_key_to_pos(key))
+		var neighbors := adjacency.get(key, []) as Array
+		for neighbor_variant in neighbors:
+			var neighbor_key := str(neighbor_variant)
+			if key > neighbor_key:
+				continue
+			var draw_color := base_color
+			if not selected_set.is_empty() and (selected_set.has(key) or selected_set.has(neighbor_key)):
+				draw_color = Color(
+					minf(base_color.r * PATH_PREVIEW_SELECTED_MULTIPLIER, 1.0),
+					minf(base_color.g * PATH_PREVIEW_SELECTED_MULTIPLIER, 1.0),
+					minf(base_color.b * PATH_PREVIEW_SELECTED_MULTIPLIER, 1.0),
+					1.0
+				)
+			var to_pos := _rail_cell_to_world_center(_rail_key_to_pos(neighbor_key))
+			line_mesh.surface_set_color(draw_color)
+			line_mesh.surface_add_vertex(from_pos)
+			line_mesh.surface_add_vertex(to_pos)
+
+
+func _build_path_selection_set(cells: Dictionary) -> Dictionary:
+	var selected_set := {}
+	for key in _path_selected_keys:
+		if key in cells:
+			selected_set[key] = true
+	return selected_set
+
+
+func _rebuild_rail_grid_preview() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+
+	if not _rail_grid_preview_mesh or not is_instance_valid(_rail_grid_preview_mesh):
+		_rail_grid_preview_mesh = MeshInstance3D.new()
+		_rail_grid_preview_mesh.name = "XtremeRailGridPreview_TEMP"
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = RAIL_PREVIEW_COLOR
+		mat.vertex_color_use_as_albedo = true
+		_rail_grid_preview_mesh.material_override = mat
+		scene_root.add_child(_rail_grid_preview_mesh)
+
+	if _rail_grid_cells.is_empty():
+		_rail_grid_preview_mesh.mesh = null
+		_rail_grid_preview_mesh.visible = false
+		return
+
+	var adjacency := _build_path_adjacency(_rail_grid_cells)
+	var selected_set := _build_path_selection_set(_rail_grid_cells)
+	var line_mesh := ImmediateMesh.new()
+	line_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	_append_path_adjacency_lines(line_mesh, adjacency, RAIL_PREVIEW_COLOR, selected_set)
+	line_mesh.surface_end()
+
+	_rail_grid_preview_mesh.mesh = line_mesh
+	_rail_grid_preview_mesh.visible = true
+
+
+func _rebuild_coaster_grid_preview() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+
+	if not _coaster_grid_preview_mesh or not is_instance_valid(_coaster_grid_preview_mesh):
+		_coaster_grid_preview_mesh = MeshInstance3D.new()
+		_coaster_grid_preview_mesh.name = "XtremeCoasterGridPreview_TEMP"
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = COASTER_PREVIEW_COLOR
+		mat.vertex_color_use_as_albedo = true
+		_coaster_grid_preview_mesh.material_override = mat
+		scene_root.add_child(_coaster_grid_preview_mesh)
+
+	if _coaster_grid_cells.is_empty():
+		_coaster_grid_preview_mesh.mesh = null
+		_coaster_grid_preview_mesh.visible = false
+		return
+
+	var adjacency := _build_path_adjacency(_coaster_grid_cells)
+	var selected_set := _build_path_selection_set(_coaster_grid_cells)
+	var line_mesh := ImmediateMesh.new()
+	line_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	_append_path_adjacency_lines(line_mesh, adjacency, COASTER_PREVIEW_COLOR, selected_set)
+	line_mesh.surface_end()
+
+	_coaster_grid_preview_mesh.mesh = line_mesh
+	_coaster_grid_preview_mesh.visible = true
+
+
+func _create_fallback_dash_ring_preview() -> Node3D:
+	var root := Node3D.new()
+	var mesh := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.15
+	torus.outer_radius = 0.4
+	torus.rings = 12
+	torus.ring_segments = 18
+	mesh.mesh = torus
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = DASH_PREVIEW_COLOR
+	mat.emission_enabled = true
+	mat.emission = DASH_PREVIEW_COLOR
+	mat.emission_energy_multiplier = 0.35
+	mesh.material_override = mat
+	mesh.rotation_degrees.x = 90.0
+
+	root.add_child(mesh)
+	return root
+
+
+func _rebuild_dash_grid_preview() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if not scene_root:
+		return
+
+	if not _dash_grid_preview_root or not is_instance_valid(_dash_grid_preview_root):
+		_dash_grid_preview_root = Node3D.new()
+		_dash_grid_preview_root.name = "XtremeDashGridPreview_TEMP"
+		scene_root.add_child(_dash_grid_preview_root)
+
+	for child in _dash_grid_preview_root.get_children():
+		_dash_grid_preview_root.remove_child(child)
+		child.queue_free()
+
+	if _dash_grid_cells.is_empty():
+		_dash_grid_preview_root.visible = false
+		return
+
+	var selected_set := _build_path_selection_set(_dash_grid_cells)
+	var adjacency := _build_path_adjacency(_dash_grid_cells)
+	var line_instance := MeshInstance3D.new()
+	line_instance.name = "DashLines_TEMP"
+	var line_mesh := ImmediateMesh.new()
+	line_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	_append_path_adjacency_lines(line_mesh, adjacency, DASH_PREVIEW_COLOR, selected_set)
+	line_mesh.surface_end()
+	line_instance.mesh = line_mesh
+	var line_mat := StandardMaterial3D.new()
+	line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	line_mat.albedo_color = DASH_PREVIEW_COLOR
+	line_mat.vertex_color_use_as_albedo = true
+	line_instance.material_override = line_mat
+	_dash_grid_preview_root.add_child(line_instance)
+
+	var ring_scene := load(DASH_RING_PREVIEW_SCENE_PATH) as PackedScene
+	for key_variant in _dash_grid_cells.keys():
+		var key := str(key_variant)
+		var ring_node: Node3D = _create_fallback_dash_ring_preview()
+		if ring_scene:
+			var instance := ring_scene.instantiate()
+			if instance is Node3D:
+				ring_node = instance as Node3D
+		ring_node.name = "DashRing_%s_TEMP" % key.replace(",", "_")
+		ring_node.position = _rail_cell_to_world_center(_rail_key_to_pos(key))
+
+		var ring_mesh := ring_node.find_child("MeshInstance3D", true, false) as Node3D
+		if ring_mesh:
+			ring_mesh.rotation_degrees.x = 90.0
+
+		if selected_set.has(key):
+			ring_node.scale = Vector3.ONE * 1.12
+		_dash_grid_preview_root.add_child(ring_node)
+
+	_dash_grid_preview_root.visible = true
+
+
+func _rebuild_path_grid_previews() -> void:
+	_rebuild_rail_grid_preview()
+	_rebuild_coaster_grid_preview()
+	_rebuild_dash_grid_preview()
+
 func _set_path_edit_mode(mode: int) -> void:
 	_path_edit_mode = mode
+	_path_selected_keys.clear()
+	_select_dragging = false
+	if _select_preview_mesh:
+		_select_preview_mesh.visible = false
 	var mode_names := ["Grind Rail", "Roller Coaster", "Light Dash"]
 	_set_status("Path Type: %s" % mode_names[mode])
 	_update_path_properties_visibility()
 	_clear_current_path()
+	_rebuild_path_grid_previews()
 
 func _set_path_tool(tool: int) -> void:
 	_path_tool_mode = tool
+	if tool != 1:
+		_select_dragging = false
+		if _select_preview_mesh:
+			_select_preview_mesh.visible = false
 	var tool_names := ["Place", "Select", "Edit", "Delete"]
 	_set_status("Path Tool: %s" % tool_names[tool])
 
