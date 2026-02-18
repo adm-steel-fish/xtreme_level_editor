@@ -379,35 +379,18 @@ func _create_light_dash_ring_node(trail: XtremeLightDashTrail, dedicated: bool, 
 		var instance := trail.ring_scene.instantiate()
 		var ring_root := instance as Node3D
 		if ring_root:
-			ring_root.add_to_group("currency")
+			_configure_light_dash_ring_node(ring_root, dedicated, dedicated_alpha)
 			return ring_root
 
 		var wrapper := Node3D.new()
 		wrapper.add_child(instance)
-		wrapper.add_to_group("currency")
+		_configure_light_dash_ring_node(wrapper, dedicated, dedicated_alpha)
 		return wrapper
 
-	if dedicated:
-		var marker := Node3D.new()
-		marker.add_to_group("currency")
-		marker.add_to_group("light_dash_dedicated")
-
-		var mesh_instance := MeshInstance3D.new()
-		var torus := TorusMesh.new()
-		torus.inner_radius = 0.12
-		torus.outer_radius = 0.34
-		mesh_instance.mesh = torus
-		mesh_instance.rotation_degrees.x = 90.0
-		var mat := StandardMaterial3D.new()
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.albedo_color = Color(1.0, 0.88, 0.15, dedicated_alpha if trail.dedicated_rings_visible else 0.18)
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mesh_instance.material_override = mat
-		marker.add_child(mesh_instance)
-		return marker
-
 	var area := Area3D.new()
-	area.add_to_group("currency")
+	_configure_light_dash_ring_node(area, dedicated, dedicated_alpha)
+	area.collision_layer = 4
+	area.collision_mask = 1
 
 	var script := load(test_currency_script_path) as Script
 	if script:
@@ -437,6 +420,22 @@ func _create_light_dash_ring_node(trail: XtremeLightDashTrail, dedicated: bool, 
 	area.add_child(mesh_instance)
 
 	return area
+
+
+func _configure_light_dash_ring_node(node: Node3D, dedicated: bool, dedicated_alpha: float) -> void:
+	node.add_to_group("currency")
+	if dedicated:
+		node.add_to_group("light_dash_dedicated")
+
+	if _node_has_property(node, "collectible"):
+		node.set("collectible", true)
+	if _node_has_property(node, "spawn_dash_residual_on_collect"):
+		node.set("spawn_dash_residual_on_collect", true)
+	if _node_has_property(node, "dash_residual_alpha"):
+		var residual_alpha := clampf(maxf(dedicated_alpha, 0.18), 0.05, 1.0)
+		node.set("dash_residual_alpha", residual_alpha)
+	if _node_has_property(node, "dash_residual_scale"):
+		node.set("dash_residual_scale", 0.92)
 
 
 func _grid_point_to_world_center(point: Vector3, cell_size: Vector3) -> Vector3:

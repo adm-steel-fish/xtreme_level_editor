@@ -8,6 +8,10 @@ class_name XtremeTestCurrency
 @export var value: int = 1
 @export var rotation_speed: float = 180.0
 @export var use_retro_shader: bool = true  ## Use PS1/Saturn style retro shader
+@export var collectible: bool = true
+@export var spawn_dash_residual_on_collect: bool = true
+@export var dash_residual_alpha: float = 0.2
+@export var dash_residual_scale: float = 0.92
 
 var _collected: bool = false
 var _unique_material: Material  # Each instance gets its own material (can be ShaderMaterial or StandardMaterial3D)
@@ -120,7 +124,7 @@ func _process(delta: float) -> void:
 
 
 func _on_body_entered(body: Node3D) -> void:
-	if _collected:
+	if _collected or not collectible:
 		return
 	
 	# Check if it's the player
@@ -130,11 +134,12 @@ func _on_body_entered(body: Node3D) -> void:
 
 ## Called by player controller during light dash or by collision
 func collect() -> void:
-	if _collected:
+	if _collected or not collectible:
 		return
 	
 	_collected = true
 	collected.emit(self)
+	_spawn_light_dash_residual()
 	
 	# Disable collision immediately to prevent double-collection
 	set_deferred("monitoring", false)
@@ -157,3 +162,43 @@ func collect() -> void:
 			tween.tween_property(std_mat, "albedo_color:a", 0.0, 0.15)
 	
 	tween.chain().tween_callback(queue_free)
+
+
+func _spawn_light_dash_residual() -> void:
+	if not spawn_dash_residual_on_collect:
+		return
+
+	var parent_node := get_parent()
+	if not parent_node:
+		return
+
+	var residual := Node3D.new()
+	residual.name = "%s_DashResidual" % name
+	residual.global_transform = global_transform
+	residual.scale = Vector3.ONE * maxf(dash_residual_scale, 0.05)
+	residual.add_to_group("currency")
+	residual.add_to_group("light_dash_dedicated")
+
+	var mesh_instance := MeshInstance3D.new()
+	var source_mesh := get_node_or_null("MeshInstance3D") as MeshInstance3D
+	if source_mesh and source_mesh.mesh:
+		mesh_instance.mesh = source_mesh.mesh
+		mesh_instance.transform = source_mesh.transform
+	else:
+		var torus := TorusMesh.new()
+		torus.inner_radius = 0.15
+		torus.outer_radius = 0.4
+		mesh_instance.mesh = torus
+		mesh_instance.rotation_degrees.x = 90.0
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1.0, 0.88, 0.15, clampf(dash_residual_alpha, 0.02, 1.0))
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.88, 0.15)
+	mat.emission_energy_multiplier = 0.2
+	mesh_instance.material_override = mat
+	residual.add_child(mesh_instance)
+
+	parent_node.add_child(residual)
