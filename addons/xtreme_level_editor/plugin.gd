@@ -54,6 +54,12 @@ var _brush_size: int = 1
 var _is_plugin_active: bool = false
 var _editing_enabled: bool = false
 
+# ============ Mode System ============
+enum EditorModeType { BUILD, TEST, SETTINGS, PAINT, LOGIC }
+var _editor_modes: Dictionary = {}  # EditorModeType -> XtremeEditorMode
+var _active_editor_mode: EditorModeType = EditorModeType.BUILD
+var _active_mode_instance: XtremeEditorMode
+
 # Rotation state (in 90-degree increments: 0, 1, 2, 3)
 var _current_rotation: Vector3i = Vector3i.ZERO
 
@@ -79,6 +85,10 @@ var _rect_dragging: bool = false
 
 # Select drag state (for preview)
 var _select_dragging: bool = false
+
+# Clipboard for copy/paste
+var _clipboard: Dictionary = {}  # Result of level_data.copy_region()
+var _clipboard_origin: Vector3i = Vector3i.ZERO
 
 # Undo/Redo system
 var _undo_history: Array[Dictionary] = []
@@ -161,11 +171,12 @@ func _enter_tree() -> void:
 	_register_custom_types()
 	_create_editor_dock()
 	_create_context_menu()
+	_initialize_editor_modes()
 	_is_plugin_active = true
-	
+
 	# Connect to scene change signal to handle persistence
 	EditorInterface.get_editor_main_screen().get_parent().child_entered_tree.connect(_on_scene_changed)
-	
+
 	# Try to recover existing visualizer if present
 	call_deferred("_try_recover_existing_visualizer")
 	
@@ -174,17 +185,23 @@ func _enter_tree() -> void:
 func _exit_tree() -> void:
 	_is_plugin_active = false
 	_editing_enabled = false
-	
+
+	# Deactivate and clear editor modes
+	if _active_mode_instance:
+		_active_mode_instance.deactivate()
+		_active_mode_instance = null
+	_editor_modes.clear()
+
 	if _main_dock:
 		remove_control_from_docks(_main_dock)
 		_main_dock.queue_free()
 		_main_dock = null
 	_tool_tab_container = null
-	
+
 	if _context_menu:
 		_context_menu.queue_free()
 		_context_menu = null
-	
+
 	_cleanup_visualizer()
 	_unregister_custom_types()
 	print("[%s] Plugin cleaned up" % PLUGIN_NAME)
@@ -311,6 +328,121 @@ func _create_default_palette() -> void:
 	var DefaultTiles := preload("res://addons/xtreme_level_editor/scripts/default_tiles.gd")
 	_current_palette = DefaultTiles.create_default_palette()
 
+# ============ Mode System ============
+
+func _initialize_editor_modes() -> void:
+	# Create mode instances
+	var build_mode := XtremeBuildMode.new()
+	build_mode.plugin = self
+	_editor_modes[EditorModeType.BUILD] = build_mode
+
+	var test_mode := XtremeTestMode.new()
+	test_mode.plugin = self
+	_editor_modes[EditorModeType.TEST] = test_mode
+
+	var settings_mode := XtremeSettingsMode.new()
+	settings_mode.plugin = self
+	_editor_modes[EditorModeType.SETTINGS] = settings_mode
+
+	var paint_mode := XtremePaintMode.new()
+	paint_mode.plugin = self
+	_editor_modes[EditorModeType.PAINT] = paint_mode
+
+	var logic_mode := XtremeLogicMode.new()
+	logic_mode.plugin = self
+	_editor_modes[EditorModeType.LOGIC] = logic_mode
+
+	# Sync shared state to all modes
+	_sync_mode_shared_state()
+
+	# Activate build mode by default
+	_active_mode_instance = build_mode
+	build_mode.activate()
+
+
+func _sync_mode_shared_state() -> void:
+	for mode in _editor_modes.values():
+		mode.level_data = _current_level
+		mode.grid_settings = _grid_settings
+		mode.palette = _current_palette
+		mode.grid_visualizer = _grid_visualizer
+
+
+func _switch_editor_mode(mode_type: EditorModeType) -> void:
+	if _active_editor_mode == mode_type and _active_mode_instance:
+		return
+
+	# Deactivate current mode
+	if _active_mode_instance:
+		_active_mode_instance.deactivate()
+
+	_active_editor_mode = mode_type
+	_active_mode_instance = _editor_modes.get(mode_type)
+
+	if _active_mode_instance:
+		_sync_mode_shared_state()
+		_active_mode_instance.activate()
+
+
+# ============ Build Mode Delegation Methods ============
+# These are called by XtremeBuildMode to delegate input handling back here.
+# This keeps all existing build logic working while the mode system is in place.
+
+func _handle_build_3d_input(camera: Camera3D, event: InputEvent) -> int:
+	# This is the existing _forward_3d_gui_input logic for build mode
+	return _forward_3d_gui_input_internal(camera, event)
+
+
+func _handle_build_key_input(event: InputEventKey) -> bool:
+	if event.pressed and not event.echo:
+		# Grid orientation hotkeys (1, 2, 3)
+		if event.keycode == KEY_1:
+			_set_grid_orientation(GRID_XZ)
+			return true
+		elif event.keycode == KEY_2:
+			_set_grid_orientation(GRID_XY)
+			return true
+		elif event.keycode == KEY_3:
+			_set_grid_orientation(GRID_YZ)
+			return true
+		# Rotation hotkeys
+		elif event.keycode == KEY_R:
+			if event.shift_pressed:
+				_cycle_rotation_x()
+			elif event.ctrl_pressed:
+				_cycle_rotation_z()
+			else:
+				_cycle_rotation_y()
+			return true
+		# Undo/Redo
+		elif event.keycode == KEY_Z and event.ctrl_pressed:
+			if event.shift_pressed:
+				_redo()
+			else:
+				_undo()
+			return true
+		# Copy (Ctrl+C)
+		elif event.keycode == KEY_C and event.ctrl_pressed:
+			_copy_selection()
+			return true
+		# Cut (Ctrl+X)
+		elif event.keycode == KEY_X and event.ctrl_pressed:
+			_cut_selection()
+			return true
+		# Paste (Ctrl+V)
+		elif event.keycode == KEY_V and event.ctrl_pressed:
+			_paste_clipboard()
+			return true
+	return false
+
+
+func _handle_build_mouse_release(event: InputEventMouseButton) -> void:
+	if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		if _edit_mode == 0 and _stroke_affected.size() > 0:
+			_finalize_stroke("Paint")
+		elif _edit_mode == 1 and _stroke_affected.size() > 0:
+			_finalize_stroke("Erase")
+
 func _create_context_menu() -> void:
 	_context_menu = PopupMenu.new()
 	_context_menu.name = "XtremeContextMenu"
@@ -368,10 +500,11 @@ func _on_context_menu_selected(id: int) -> void:
 func _set_tool(tool_id: int) -> void:
 	_edit_mode = tool_id
 	_clear_selection()
-	var tool_names := ["Paint", "Erase", "Select", "Rect Fill", "Bucket Fill", "Water Zone"]
+	var tool_names := ["Paint", "Erase", "Select", "Rect Fill", "Bucket Fill", "Water Zone", "Shape"]
 	if tool_id < tool_names.size():
 		_set_status("Tool: %s" % tool_names[tool_id])
 	_update_tool_buttons()
+	_update_shape_tool_visibility()
 
 func _update_tool_buttons() -> void:
 	if not _main_dock:
@@ -389,6 +522,15 @@ func _update_tool_buttons() -> void:
 	if rect_btn: rect_btn.button_pressed = (_edit_mode == 3)
 	if bucket_btn: bucket_btn.button_pressed = (_edit_mode == 4)
 	if water_btn: water_btn.button_pressed = (_edit_mode == 5)
+	var shape_btn := _main_dock.find_child("ShapeBtn", true, false) as Button
+	if shape_btn: shape_btn.button_pressed = (_edit_mode == 6)
+
+func _update_shape_tool_visibility() -> void:
+	if not _main_dock:
+		return
+	var panel := _main_dock.find_child("ShapeToolPanel", true, false)
+	if panel:
+		panel.visible = (_edit_mode == 6)
 
 func _change_y_level(delta: int) -> void:
 	if not _current_level:
@@ -521,7 +663,30 @@ func _create_editor_dock() -> void:
 	var rail_tools := _create_rail_tools_tab()
 	rail_tools.name = "Rail Tools"
 	tab_container.add_child(rail_tools)
-	
+
+	# Create Test Mode tab
+	var test_tab := _create_mode_tab(EditorModeType.TEST, "Test")
+	if test_tab:
+		tab_container.add_child(test_tab)
+
+	# Create Paint Mode tab
+	var paint_tab := _create_mode_tab(EditorModeType.PAINT, "Paint")
+	if paint_tab:
+		tab_container.add_child(paint_tab)
+
+	# Create Logic Mode tab
+	var logic_tab := _create_mode_tab(EditorModeType.LOGIC, "Logic")
+	if logic_tab:
+		tab_container.add_child(logic_tab)
+
+	# Create Settings Mode tab
+	var settings_tab := _create_mode_tab(EditorModeType.SETTINGS, "Settings")
+	if settings_tab:
+		tab_container.add_child(settings_tab)
+
+	# Connect tab changed signal for mode switching
+	tab_container.tab_changed.connect(_on_tool_tab_changed)
+
 	# Status label (outside tabs - always visible)
 	var status := Label.new()
 	status.name = "Status"
@@ -531,6 +696,43 @@ func _create_editor_dock() -> void:
 	_main_dock.add_child(status)
 	
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _main_dock)
+
+
+func _create_mode_tab(mode_type: EditorModeType, tab_name: String) -> Control:
+	# Modes are initialized later; create UI via deferred call
+	var placeholder := VBoxContainer.new()
+	placeholder.name = tab_name
+	placeholder.set_meta("mode_type", mode_type)
+	# Populate after modes are initialized
+	call_deferred("_populate_mode_tab", placeholder, mode_type)
+	return placeholder
+
+
+func _populate_mode_tab(container: Control, mode_type: EditorModeType) -> void:
+	var mode: XtremeEditorMode = _editor_modes.get(mode_type)
+	if not mode:
+		return
+	var ui := mode.create_ui()
+	if ui:
+		container.add_child(ui)
+
+
+func _on_tool_tab_changed(tab_index: int) -> void:
+	if not _tool_tab_container:
+		return
+
+	var tab := _tool_tab_container.get_child(tab_index)
+	if not tab:
+		return
+
+	# Tabs 0 (Level Tools) and 1 (Rail Tools) are both Build mode
+	if tab_index <= 1:
+		_switch_editor_mode(EditorModeType.BUILD)
+	elif tab.has_meta("mode_type"):
+		var mode_type: EditorModeType = tab.get_meta("mode_type")
+		_switch_editor_mode(mode_type)
+	else:
+		_switch_editor_mode(EditorModeType.BUILD)
 
 func _create_level_tools_tab() -> Control:
 	var scroll := ScrollContainer.new()
@@ -745,7 +947,24 @@ func _create_level_tools_tab() -> Control:
 	water_btn.tooltip_text = "Draw water zone volumes"
 	tool_row2.add_child(water_btn)
 	content.add_child(tool_row2)
-	
+
+	var tool_row3 := HBoxContainer.new()
+	var shape_btn := Button.new()
+	shape_btn.name = "ShapeBtn"
+	shape_btn.text = "Shape"
+	shape_btn.toggle_mode = true
+	shape_btn.button_group = tool_group
+	shape_btn.pressed.connect(func(): _set_tool(6))
+	shape_btn.tooltip_text = "Place geometric primitives (Box, Sphere, Cylinder, Ramp)"
+	tool_row3.add_child(shape_btn)
+	content.add_child(tool_row3)
+
+	# Shape Tool panel (shown when Shape tool is active)
+	var shape_panel := _create_shape_tool_panel()
+	shape_panel.name = "ShapeToolPanel"
+	shape_panel.visible = false
+	content.add_child(shape_panel)
+
 	# Undo/Redo buttons
 	var undo_row := HBoxContainer.new()
 	var undo_btn := Button.new()
@@ -1051,18 +1270,42 @@ func _create_level_tools_tab() -> Control:
 	curve_check.text = "Enable Preview"
 	curve_check.toggled.connect(_on_curve_toggled)
 	content.add_child(curve_check)
-	var intensity_hbox := HBoxContainer.new()
-	intensity_hbox.add_child(_make_label("Curve:"))
-	var intensity := HSlider.new()
-	intensity.name = "CurveIntensity"
-	intensity.min_value = 0.0
-	intensity.max_value = 0.1
-	intensity.step = 0.001
-	intensity.value = 0.01
-	intensity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	intensity.value_changed.connect(_on_curve_intensity_changed)
-	intensity_hbox.add_child(intensity)
-	content.add_child(intensity_hbox)
+	var h_curve_hbox := HBoxContainer.new()
+	h_curve_hbox.add_child(_make_label("H Curve:"))
+	var h_curve_slider := HSlider.new()
+	h_curve_slider.name = "CurveHorizontal"
+	h_curve_slider.min_value = 0.0
+	h_curve_slider.max_value = 0.3
+	h_curve_slider.step = 0.001
+	h_curve_slider.value = 0.15
+	h_curve_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h_curve_slider.value_changed.connect(_on_curve_horizontal_changed)
+	h_curve_hbox.add_child(h_curve_slider)
+	content.add_child(h_curve_hbox)
+	var v_curve_hbox := HBoxContainer.new()
+	v_curve_hbox.add_child(_make_label("V Curve:"))
+	var v_curve_slider := HSlider.new()
+	v_curve_slider.name = "CurveVertical"
+	v_curve_slider.min_value = 0.0
+	v_curve_slider.max_value = 0.3
+	v_curve_slider.step = 0.001
+	v_curve_slider.value = 0.08
+	v_curve_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v_curve_slider.value_changed.connect(_on_curve_vertical_changed)
+	v_curve_hbox.add_child(v_curve_slider)
+	content.add_child(v_curve_hbox)
+	var falloff_hbox := HBoxContainer.new()
+	falloff_hbox.add_child(_make_label("Falloff:"))
+	var falloff_slider := HSlider.new()
+	falloff_slider.name = "CurveFalloff"
+	falloff_slider.min_value = 1.0
+	falloff_slider.max_value = 4.0
+	falloff_slider.step = 0.1
+	falloff_slider.value = 2.0
+	falloff_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	falloff_slider.value_changed.connect(_on_curve_falloff_changed)
+	falloff_hbox.add_child(falloff_slider)
+	content.add_child(falloff_hbox)
 	
 	# Distance Effects
 	content.add_child(_make_label("Distance Effects"))
@@ -2018,6 +2261,108 @@ func _update_select_preview(current_pos: Vector3i) -> void:
 	_select_preview_mesh.position = center
 	_select_preview_mesh.visible = true
 
+# ============ Clipboard (Copy/Cut/Paste) ============
+
+func _copy_selection() -> void:
+	if not _has_selection or not _current_level:
+		_set_status("Select a region first (Ctrl+C)")
+		return
+
+	_clipboard = _current_level.copy_region(_selection_start, _selection_end)
+	_clipboard_origin = Vector3i(
+		mini(_selection_start.x, _selection_end.x),
+		mini(_selection_start.y, _selection_end.y),
+		mini(_selection_start.z, _selection_end.z)
+	)
+	var tiles_dict: Dictionary = _clipboard.get("tiles", {})
+	_set_status("Copied %d tile(s) to clipboard" % tiles_dict.size())
+
+
+func _cut_selection() -> void:
+	if not _has_selection or not _current_level:
+		_set_status("Select a region first (Ctrl+X)")
+		return
+
+	# Copy first
+	_clipboard = _current_level.copy_region(_selection_start, _selection_end)
+	_clipboard_origin = Vector3i(
+		mini(_selection_start.x, _selection_end.x),
+		mini(_selection_start.y, _selection_end.y),
+		mini(_selection_start.z, _selection_end.z)
+	)
+
+	# Then clear the selected region
+	var min_pos := Vector3i(
+		mini(_selection_start.x, _selection_end.x),
+		mini(_selection_start.y, _selection_end.y),
+		mini(_selection_start.z, _selection_end.z)
+	)
+	var max_pos := Vector3i(
+		maxi(_selection_start.x, _selection_end.x),
+		maxi(_selection_start.y, _selection_end.y),
+		maxi(_selection_start.z, _selection_end.z)
+	)
+
+	var positions: Array[Vector3i] = []
+	for x in range(min_pos.x, max_pos.x + 1):
+		for y in range(min_pos.y, max_pos.y + 1):
+			for z in range(min_pos.z, max_pos.z + 1):
+				positions.append(Vector3i(x, y, z))
+
+	var before := _capture_tiles_in_region(positions)
+	for pos in positions:
+		_current_level.clear_tile(pos)
+	var after := _capture_tiles_in_region(positions)
+	_record_undo("Cut", before, after)
+
+	if _grid_visualizer:
+		_grid_visualizer.rebuild()
+
+	var cut_tiles: Dictionary = _clipboard.get("tiles", {})
+	_set_status("Cut %d tile(s) to clipboard" % cut_tiles.size())
+
+
+func _paste_clipboard() -> void:
+	if _clipboard.is_empty() or not _current_level:
+		_set_status("Nothing in clipboard (Ctrl+V)")
+		return
+
+	# Paste at the current hover position, or selection start if available
+	var paste_pos: Vector3i
+	if _last_hover_pos.x >= 0:
+		paste_pos = _last_hover_pos
+	elif _has_selection:
+		paste_pos = Vector3i(
+			mini(_selection_start.x, _selection_end.x),
+			mini(_selection_start.y, _selection_end.y),
+			mini(_selection_start.z, _selection_end.z)
+		)
+	else:
+		paste_pos = Vector3i(0, _current_y_level, 0)
+
+	# Capture region that will be affected
+	var region_size: Vector3i = _clipboard.get("size", Vector3i.ONE)
+	var positions: Array[Vector3i] = []
+	for x in range(region_size.x):
+		for y in range(region_size.y):
+			for z in range(region_size.z):
+				positions.append(paste_pos + Vector3i(x, y, z))
+
+	var before := _capture_tiles_in_region(positions)
+
+	# Paste the region
+	_current_level.paste_region(_clipboard, paste_pos, true)
+
+	var after := _capture_tiles_in_region(positions)
+	_record_undo("Paste", before, after)
+
+	if _grid_visualizer:
+		_grid_visualizer.rebuild()
+
+	var pasted_tiles: Dictionary = _clipboard.get("tiles", {})
+	_set_status("Pasted %d tile(s) at (%d, %d, %d)" % [pasted_tiles.size(), paste_pos.x, paste_pos.y, paste_pos.z])
+
+
 # ============ Selection Operations ============
 
 func _on_save_chunk() -> void:
@@ -2206,6 +2551,7 @@ func _on_new_level() -> void:
 	_clear_selection()
 	_create_or_update_visualizer()
 	_auto_select_visualizer()
+	_sync_mode_shared_state()
 	_set_status("New level - Start painting!")
 
 func _on_load_level() -> void:
@@ -2275,6 +2621,7 @@ func _load_level_file(path: String) -> void:
 		_redo_history.clear()
 		
 		_clear_selection()
+		_sync_mode_shared_state()
 		_set_status("Loaded: %s" % path.get_file())
 	else:
 		_set_status("Error: Invalid level file")
@@ -2352,8 +2699,12 @@ func _export_level_file(path: String) -> void:
 	# Curved world settings
 	var curve_check := _main_dock.find_child("ExportWithCurve", true, false) as CheckBox
 	exporter.apply_curved_world = curve_check.button_pressed if curve_check else true
-	var intensity := _main_dock.find_child("CurveIntensity", true, false) as HSlider
-	exporter.curve_intensity = intensity.value if intensity else 0.01
+	var h_curve := _main_dock.find_child("CurveHorizontal", true, false) as HSlider
+	exporter.curve_horizontal = h_curve.value if h_curve else 0.15
+	var v_curve := _main_dock.find_child("CurveVertical", true, false) as HSlider
+	exporter.curve_vertical = v_curve.value if v_curve else 0.08
+	var falloff := _main_dock.find_child("CurveFalloff", true, false) as HSlider
+	exporter.curve_falloff_exponent = falloff.value if falloff else 2.0
 	
 	# Distance effect settings
 	var dist_check := _main_dock.find_child("DistanceEffectsEnabled", true, false) as CheckBox
@@ -2540,15 +2891,238 @@ func _on_clear_instance_properties() -> void:
 
 	_set_status("Cleared all overrides on %d tile(s)" % targets.size())
 
+# ============ Shape Tool ============
+
+enum ShapeType { BOX, SPHERE, CYLINDER, RAMP }
+enum ShapeOperation { ADD, SUBTRACT }
+
+var _shape_type: ShapeType = ShapeType.BOX
+var _shape_operation: ShapeOperation = ShapeOperation.ADD
+var _shape_size_x: int = 5
+var _shape_size_y: int = 3
+var _shape_size_z: int = 5
+
+
+func _create_shape_tool_panel() -> VBoxContainer:
+	var panel := VBoxContainer.new()
+
+	# Shape type selector
+	panel.add_child(_make_label("Shape:"))
+	var shape_selector := OptionButton.new()
+	shape_selector.name = "ShapeTypeSelector"
+	shape_selector.add_item("Box", 0)
+	shape_selector.add_item("Sphere", 1)
+	shape_selector.add_item("Cylinder", 2)
+	shape_selector.add_item("Ramp", 3)
+	shape_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shape_selector.item_selected.connect(func(idx): _shape_type = idx as ShapeType)
+	panel.add_child(shape_selector)
+
+	# Shape dimensions
+	panel.add_child(_make_label("Dimensions:"))
+	var dim_grid := GridContainer.new()
+	dim_grid.columns = 6
+	dim_grid.add_child(_make_label("W:"))
+	var dim_x := SpinBox.new()
+	dim_x.name = "ShapeSizeX"
+	dim_x.min_value = 1
+	dim_x.max_value = 64
+	dim_x.value = 5
+	dim_x.custom_minimum_size.x = 55
+	dim_x.value_changed.connect(func(v): _shape_size_x = int(v))
+	dim_grid.add_child(dim_x)
+	dim_grid.add_child(_make_label("H:"))
+	var dim_y := SpinBox.new()
+	dim_y.name = "ShapeSizeY"
+	dim_y.min_value = 1
+	dim_y.max_value = 64
+	dim_y.value = 3
+	dim_y.custom_minimum_size.x = 55
+	dim_y.value_changed.connect(func(v): _shape_size_y = int(v))
+	dim_grid.add_child(dim_y)
+	dim_grid.add_child(_make_label("D:"))
+	var dim_z := SpinBox.new()
+	dim_z.name = "ShapeSizeZ"
+	dim_z.min_value = 1
+	dim_z.max_value = 64
+	dim_z.value = 5
+	dim_z.custom_minimum_size.x = 55
+	dim_z.value_changed.connect(func(v): _shape_size_z = int(v))
+	dim_grid.add_child(dim_z)
+	panel.add_child(dim_grid)
+
+	# Operation selector
+	panel.add_child(_make_label("Operation:"))
+	var op_row := HBoxContainer.new()
+	var op_group := ButtonGroup.new()
+	var add_btn := Button.new()
+	add_btn.text = "Add"
+	add_btn.toggle_mode = true
+	add_btn.button_pressed = true
+	add_btn.button_group = op_group
+	add_btn.pressed.connect(func(): _shape_operation = ShapeOperation.ADD)
+	op_row.add_child(add_btn)
+	var sub_btn := Button.new()
+	sub_btn.text = "Subtract"
+	sub_btn.toggle_mode = true
+	sub_btn.button_group = op_group
+	sub_btn.pressed.connect(func(): _shape_operation = ShapeOperation.SUBTRACT)
+	op_row.add_child(sub_btn)
+	panel.add_child(op_row)
+
+	# Place button
+	var place_btn := Button.new()
+	place_btn.text = "Place Shape at Cursor"
+	place_btn.custom_minimum_size.y = 30
+	place_btn.pressed.connect(_place_shape_at_cursor)
+	panel.add_child(place_btn)
+
+	# Place at selection button
+	var place_sel_btn := Button.new()
+	place_sel_btn.text = "Place Shape at Selection Start"
+	place_sel_btn.pressed.connect(_place_shape_at_selection)
+	panel.add_child(place_sel_btn)
+
+	var hint := Label.new()
+	hint.text = "Shapes center on cursor/selection.\nSubtract carves out existing tiles."
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Color.GRAY)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(hint)
+
+	return panel
+
+
+func _place_shape_at_cursor() -> void:
+	if not _current_level:
+		_set_status("No level loaded")
+		return
+	if _last_hover_pos.x < 0:
+		_set_status("No cursor position - hover over grid first")
+		return
+	_place_shape(_last_hover_pos)
+
+
+func _place_shape_at_selection() -> void:
+	if not _current_level:
+		_set_status("No level loaded")
+		return
+	if not _has_selection:
+		_set_status("No selection - use Select tool first")
+		return
+	_place_shape(_selection_start)
+
+
+func _place_shape(center: Vector3i) -> void:
+	var positions := _generate_shape_positions(center)
+	if positions.is_empty():
+		_set_status("Shape resulted in no tiles")
+		return
+
+	# Capture before state for undo
+	var before := _capture_tiles_in_region(positions)
+
+	if _shape_operation == ShapeOperation.ADD:
+		for pos in positions:
+			_current_level.set_tile(pos, _selected_tile_id, _current_rotation)
+	else:  # SUBTRACT
+		for pos in positions:
+			if _current_level.has_tile(pos):
+				_current_level.clear_tile(pos)
+
+	# Capture after state and record undo
+	var after := _capture_tiles_in_region(positions)
+	var op_name := "Add" if _shape_operation == ShapeOperation.ADD else "Subtract"
+	_record_undo("Shape %s %s" % [op_name, ShapeType.keys()[_shape_type]], before, after)
+
+	# Rebuild visualizer
+	if _grid_visualizer:
+		_grid_visualizer.rebuild()
+	_set_status("Placed %s (%d tiles)" % [ShapeType.keys()[_shape_type], positions.size()])
+
+
+func _generate_shape_positions(center: Vector3i) -> Array[Vector3i]:
+	var positions: Array[Vector3i] = []
+	var half_x := _shape_size_x / 2
+	var half_y := _shape_size_y / 2
+	var half_z := _shape_size_z / 2
+
+	match _shape_type:
+		ShapeType.BOX:
+			for x in range(-half_x, -half_x + _shape_size_x):
+				for y in range(-half_y, -half_y + _shape_size_y):
+					for z in range(-half_z, -half_z + _shape_size_z):
+						var pos := center + Vector3i(x, y, z)
+						if _current_level._is_valid_position(pos):
+							positions.append(pos)
+
+		ShapeType.SPHERE:
+			var radius_x := float(_shape_size_x) / 2.0
+			var radius_y := float(_shape_size_y) / 2.0
+			var radius_z := float(_shape_size_z) / 2.0
+			for x in range(-half_x - 1, half_x + 2):
+				for y in range(-half_y - 1, half_y + 2):
+					for z in range(-half_z - 1, half_z + 2):
+						# Ellipsoid distance check
+						var nx := float(x) / radius_x if radius_x > 0 else 0.0
+						var ny := float(y) / radius_y if radius_y > 0 else 0.0
+						var nz := float(z) / radius_z if radius_z > 0 else 0.0
+						if nx * nx + ny * ny + nz * nz <= 1.0:
+							var pos := center + Vector3i(x, y, z)
+							if _current_level._is_valid_position(pos):
+								positions.append(pos)
+
+		ShapeType.CYLINDER:
+			# Cylinder along Y axis
+			var radius_x := float(_shape_size_x) / 2.0
+			var radius_z := float(_shape_size_z) / 2.0
+			for x in range(-half_x - 1, half_x + 2):
+				for y in range(-half_y, -half_y + _shape_size_y):
+					for z in range(-half_z - 1, half_z + 2):
+						var nx := float(x) / radius_x if radius_x > 0 else 0.0
+						var nz := float(z) / radius_z if radius_z > 0 else 0.0
+						if nx * nx + nz * nz <= 1.0:
+							var pos := center + Vector3i(x, y, z)
+							if _current_level._is_valid_position(pos):
+								positions.append(pos)
+
+		ShapeType.RAMP:
+			# Ramp: linearly increasing height along Z axis
+			for x in range(-half_x, -half_x + _shape_size_x):
+				for z in range(_shape_size_z):
+					# Height at this Z position (linear ramp)
+					var height := int(float(z + 1) / float(_shape_size_z) * float(_shape_size_y))
+					height = maxi(height, 1)
+					for y in range(height):
+						var pos := center + Vector3i(x, y - half_y, z - half_z)
+						if _current_level._is_valid_position(pos):
+							positions.append(pos)
+
+	return positions
+
+
 func _on_curve_toggled(enabled: bool) -> void:
 	if _grid_visualizer:
 		_grid_visualizer.curved_preview_enabled = enabled
 		_grid_visualizer.rebuild()
 
-func _on_curve_intensity_changed(value: float) -> void:
+func _on_curve_horizontal_changed(value: float) -> void:
 	if _grid_visualizer:
-		_grid_visualizer.curve_intensity = value
-		# Live update - rebuild if curve is enabled
+		_grid_visualizer.curve_horizontal = value
+		var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
+		if curve_check and curve_check.button_pressed:
+			_grid_visualizer.rebuild()
+
+func _on_curve_vertical_changed(value: float) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.curve_vertical = value
+		var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
+		if curve_check and curve_check.button_pressed:
+			_grid_visualizer.rebuild()
+
+func _on_curve_falloff_changed(value: float) -> void:
+	if _grid_visualizer:
+		_grid_visualizer.curve_falloff_exponent = value
 		var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
 		if curve_check and curve_check.button_pressed:
 			_grid_visualizer.rebuild()
@@ -2598,17 +3172,23 @@ func _create_or_update_visualizer() -> void:
 	# Sync visualizer settings from UI checkboxes
 	var curve_check := _main_dock.find_child("CurveEnabled", true, false) as CheckBox
 	var dist_check := _main_dock.find_child("DistanceEffectsEnabled", true, false) as CheckBox
-	var curve_slider := _main_dock.find_child("CurveIntensity", true, false) as HSlider
+	var h_curve_slider := _main_dock.find_child("CurveHorizontal", true, false) as HSlider
+	var v_curve_slider := _main_dock.find_child("CurveVertical", true, false) as HSlider
+	var falloff_slider := _main_dock.find_child("CurveFalloff", true, false) as HSlider
 	var dist_slider := _main_dock.find_child("EffectMaxDist", true, false) as HSlider
 	var wire_slider := _main_dock.find_child("WireframeStart", true, false) as HSlider
 	var dissolve_slider := _main_dock.find_child("DissolveStart", true, false) as HSlider
-	
+
 	# Default to OFF for both previews unless explicitly enabled in UI
 	_grid_visualizer.curved_preview_enabled = curve_check.button_pressed if curve_check else false
 	_grid_visualizer.distance_effects_enabled = dist_check.button_pressed if dist_check else false
-	
-	if curve_slider:
-		_grid_visualizer.curve_intensity = curve_slider.value
+
+	if h_curve_slider:
+		_grid_visualizer.curve_horizontal = h_curve_slider.value
+	if v_curve_slider:
+		_grid_visualizer.curve_vertical = v_curve_slider.value
+	if falloff_slider:
+		_grid_visualizer.curve_falloff_exponent = falloff_slider.value
 	if dist_slider:
 		_grid_visualizer.effect_max_distance = dist_slider.value
 	if wire_slider:
@@ -2626,6 +3206,7 @@ func _create_or_update_visualizer() -> void:
 	_create_rect_preview(scene_root)
 	_create_select_preview(scene_root)
 	_rebuild_path_grid_previews()
+	_sync_mode_shared_state()
 
 func _create_grid_lines(parent: Node) -> void:
 	_grid_lines_mesh = MeshInstance3D.new()
@@ -2751,6 +3332,18 @@ func _handles(obj: Object) -> bool:
 	return _editing_enabled and _current_level != null and _grid_visualizer != null
 
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
+	if not _editing_enabled or not _current_level or not _grid_settings:
+		return AFTER_GUI_INPUT_PASS
+
+	# Delegate to active editor mode if not in Build mode
+	if _active_editor_mode != EditorModeType.BUILD and _active_mode_instance:
+		return _active_mode_instance.handle_3d_input(camera, event)
+
+	return _forward_3d_gui_input_internal(camera, event)
+
+
+## Internal build mode 3D input handler (existing logic)
+func _forward_3d_gui_input_internal(camera: Camera3D, event: InputEvent) -> int:
 	if not _editing_enabled or not _current_level or not _grid_settings:
 		return AFTER_GUI_INPUT_PASS
 	
@@ -3407,44 +4000,14 @@ func _bucket_fill_replace(start_pos: Vector3i, target_tile_id: StringName) -> vo
 func _input(event: InputEvent) -> void:
 	if not _editing_enabled:
 		return
-	
-	if event is InputEventMouseButton:
-		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
-			# Mouse released - finalize any paint/erase stroke
-			if _edit_mode == 0 and _stroke_affected.size() > 0:
-				_finalize_stroke("Paint")
-			elif _edit_mode == 1 and _stroke_affected.size() > 0:
-				_finalize_stroke("Erase")
-	
-	elif event is InputEventKey:
-		var key := event as InputEventKey
-		if key.pressed and not key.echo:
-			# Grid orientation hotkeys (1, 2, 3)
-			if key.keycode == KEY_1:
-				_set_grid_orientation(GRID_XZ)
-				get_viewport().set_input_as_handled()
-			elif key.keycode == KEY_2:
-				_set_grid_orientation(GRID_XY)
-				get_viewport().set_input_as_handled()
-			elif key.keycode == KEY_3:
-				_set_grid_orientation(GRID_YZ)
-				get_viewport().set_input_as_handled()
-			# Rotation hotkeys
-			elif key.keycode == KEY_R:
-				if key.shift_pressed:
-					_cycle_rotation_x()
-				elif key.ctrl_pressed:
-					_cycle_rotation_z()
-				else:
-					_cycle_rotation_y()
-				get_viewport().set_input_as_handled()
-			# Undo/Redo
-			elif key.keycode == KEY_Z and key.ctrl_pressed:
-				if key.shift_pressed:
-					_redo()
-				else:
-					_undo()
+
+	# Delegate to active mode
+	if _active_mode_instance:
+		if event is InputEventMouseButton:
+			_active_mode_instance.handle_global_mouse_release(event as InputEventMouseButton)
+		elif event is InputEventKey:
+			var key := event as InputEventKey
+			if _active_mode_instance.handle_key_input(key):
 				get_viewport().set_input_as_handled()
 
 # ============ PHASE 3: Level Systems ============

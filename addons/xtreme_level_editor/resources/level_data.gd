@@ -20,6 +20,17 @@ extends Resource
 ## Theme tag for this level (affects procedural generation)
 @export var theme: String = "default"
 
+## Gameplay settings
+@export var time_limit: float = 0.0  # 0 = no time limit
+@export var music_track: String = ""
+@export var ring_target: int = 100
+@export var time_bonus_a: float = 60.0
+@export var time_bonus_b: float = 120.0
+@export var time_bonus_c: float = 180.0
+
+## Zone visual settings reference
+@export var zone_visual_settings: ZoneVisualSettings
+
 ## The grid data - stored as a flat dictionary for sparse storage
 ## Key: "x,y,z" string, Value: tile_id (StringName)
 ## Only non-empty cells are stored
@@ -36,6 +47,12 @@ var _multicell_data: Dictionary = {}
 ## Per-instance tile properties
 ## Key: "x,y,z" string, Value: Dictionary of overrides for this tile instance
 var _instance_properties: Dictionary = {}
+
+## Trigger data for the logic system
+var _triggers: Array[XtremeTriggerData] = []
+
+## Logic connections (trigger -> action wiring)
+var _logic_connections: Array[XtremeLogicConnection] = []
 
 ## Connection point markers for chunk system
 ## Array of ConnectionPoint data
@@ -430,6 +447,16 @@ func _get_property_list() -> Array[Dictionary]:
 		{
 			"name": "_instance_properties",
 			"type": TYPE_DICTIONARY,
+			"usage": PROPERTY_USAGE_STORAGE
+		},
+		{
+			"name": "_triggers",
+			"type": TYPE_ARRAY,
+			"usage": PROPERTY_USAGE_STORAGE
+		},
+		{
+			"name": "_logic_connections",
+			"type": TYPE_ARRAY,
 			"usage": PROPERTY_USAGE_STORAGE
 		}
 	]

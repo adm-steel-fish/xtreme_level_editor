@@ -64,10 +64,22 @@ signal cell_hovered(position: Vector3i)
 		curved_preview_enabled = value
 		_update_curved_world()
 
-## Curvature intensity
-@export_range(0.0, 0.1, 0.001) var curve_intensity: float = 0.01:
+## Horizontal curvature intensity (bends world left/right)
+@export_range(0.0, 0.3, 0.001) var curve_horizontal: float = 0.15:
 	set(value):
-		curve_intensity = value
+		curve_horizontal = value
+		_update_curved_world()
+
+## Vertical curvature intensity (bends world up/down)
+@export_range(0.0, 0.3, 0.001) var curve_vertical: float = 0.08:
+	set(value):
+		curve_vertical = value
+		_update_curved_world()
+
+## Curvature falloff exponent (2.0 = quadratic, higher = more dramatic at edges)
+@export_range(1.0, 4.0, 0.1) var curve_falloff_exponent: float = 2.0:
+	set(value):
+		curve_falloff_exponent = value
 		_update_curved_world()
 
 ## Curvature mode (0=spherical, 1=cylindrical X, 2=cylindrical Z)
@@ -375,7 +387,10 @@ func _update_curved_world() -> void:
 	
 	# Curvature settings
 	_curved_world_material.set_shader_parameter("curve_enabled", curved_preview_enabled)
-	_curved_world_material.set_shader_parameter("curve_intensity", curve_intensity)
+	_curved_world_material.set_shader_parameter("curve_horizontal", curve_horizontal)
+	_curved_world_material.set_shader_parameter("curve_vertical", curve_vertical)
+	_curved_world_material.set_shader_parameter("curve_falloff_exponent", curve_falloff_exponent)
+	_curved_world_material.set_shader_parameter("curve_intensity", 0.0)  # Deprecated, use new params
 	_curved_world_material.set_shader_parameter("curve_mode", curve_mode)
 	_curved_world_material.set_shader_parameter("curve_center", curve_center)
 	
@@ -412,7 +427,10 @@ func _apply_curved_material(mesh_instance: MeshInstance3D) -> void:
 		
 		# Curvature settings
 		curved_mat.set_shader_parameter("curve_enabled", curved_preview_enabled)
-		curved_mat.set_shader_parameter("curve_intensity", curve_intensity)
+		curved_mat.set_shader_parameter("curve_horizontal", curve_horizontal)
+		curved_mat.set_shader_parameter("curve_vertical", curve_vertical)
+		curved_mat.set_shader_parameter("curve_falloff_exponent", curve_falloff_exponent)
+		curved_mat.set_shader_parameter("curve_intensity", 0.0)  # Deprecated
 		curved_mat.set_shader_parameter("curve_mode", curve_mode)
 		curved_mat.set_shader_parameter("curve_center", curve_center)
 		

@@ -38,7 +38,9 @@ var merge_unit_collision_runs: bool = true
 
 # Curved world settings
 var apply_curved_world: bool = true
-var curve_intensity: float = 0.01
+var curve_horizontal: float = 0.15
+var curve_vertical: float = 0.08
+var curve_falloff_exponent: float = 2.0
 
 # Distance effect settings
 var distance_effects_enabled: bool = true
@@ -493,7 +495,8 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 	mesh_instance.mesh = array_mesh
 
 	# Expand AABB for curved world shader displacement.
-	var aabb_expansion := curve_intensity * effect_max_distance * effect_max_distance * 2.0
+	var max_curve := maxf(curve_horizontal, curve_vertical)
+	var aabb_expansion := max_curve * effect_max_distance * effect_max_distance * 2.0
 	var expanded_min := min_bounds - Vector3(aabb_expansion, aabb_expansion, aabb_expansion)
 	var expanded_max := max_bounds + Vector3(aabb_expansion, aabb_expansion, aabb_expansion)
 	mesh_instance.custom_aabb = AABB(expanded_min, expanded_max - expanded_min)
@@ -970,7 +973,10 @@ func _get_or_create_material(tile_def: XtremeTileDefinition) -> Material:
 			var shader_mat := ShaderMaterial.new()
 			shader_mat.shader = shader
 			shader_mat.set_shader_parameter("albedo", tile_def.editor_color)
-			shader_mat.set_shader_parameter("curve_intensity", curve_intensity)
+			shader_mat.set_shader_parameter("curve_horizontal", curve_horizontal)
+			shader_mat.set_shader_parameter("curve_vertical", curve_vertical)
+			shader_mat.set_shader_parameter("curve_falloff_exponent", curve_falloff_exponent)
+			shader_mat.set_shader_parameter("curve_intensity", 0.0)  # Deprecated
 			shader_mat.set_shader_parameter("curve_enabled", true)
 			shader_mat.set_shader_parameter("distance_effects_enabled", distance_effects_enabled)
 			shader_mat.set_shader_parameter("effect_max_distance", effect_max_distance)
