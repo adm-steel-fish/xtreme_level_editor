@@ -214,6 +214,16 @@ shape = SubResource("BoxShape3D_platform")
 mesh = SubResource("BoxMesh_platform")
 surface_material_override/0 = SubResource("Material_platform")
 
+[node name="Platform13" type="StaticBody3D" parent="Platforms"]
+transform = Transform3D(-1, -5.8042282e-08, -6.537459e-08, 0, 0.74779814, -0.6639263, 8.742278e-08, -0.6639263, -0.74779814, 2.2202644, 0.88643837, 12.35747)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platforms/Platform13"]
+shape = SubResource("BoxShape3D_platform")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platforms/Platform13"]
+mesh = SubResource("BoxMesh_platform")
+surface_material_override/0 = SubResource("Material_platform")
+
 [node name="Platform12" type="StaticBody3D" parent="Platforms"]
 transform = Transform3D(-4.371139e-08, 0.6639263, 0.74779814, 0, 0.74779814, -0.6639263, -1, -2.9021141e-08, -3.2687296e-08, 11.915855, 0.88643837, 12.35747)
 

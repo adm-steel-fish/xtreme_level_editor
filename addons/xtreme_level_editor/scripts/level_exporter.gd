@@ -71,6 +71,7 @@ func export_level(path: String) -> Error:
 	root.set_meta("xtreme_chunk_size", static_chunk_size)
 
 	_build_tile_lookups()
+	_validate_loop_critical_data()
 
 	match export_mode:
 		ExportMode.LEGACY_SINGLE_MESH:
@@ -97,6 +98,64 @@ func export_level(path: String) -> Error:
 	root.queue_free()
 	_clear_caches()
 	return err
+
+
+func _build_merged_tile_properties(tile_pos: Vector3i, tile_def: XtremeTileDefinition) -> Dictionary:
+	var merged_props := tile_def.custom_properties.duplicate(true)
+	if level_data and level_data.has_method("get_tile_instance_properties"):
+		var instance_props: Dictionary = level_data.get_tile_instance_properties(tile_pos)
+		for key in instance_props.keys():
+			merged_props[key] = instance_props[key]
+	return merged_props
+
+
+func _is_loop_critical_tile(tile_def: XtremeTileDefinition) -> bool:
+	match tile_def.tile_type:
+		XtremeTileDefinition.TileType.HAZARD, \
+		XtremeTileDefinition.TileType.COLLECTIBLE, \
+		XtremeTileDefinition.TileType.CHECKPOINT, \
+		XtremeTileDefinition.TileType.GOAL:
+			return true
+		_:
+			return false
+
+
+func _validate_loop_critical_data() -> void:
+	var has_spawn := false
+	var has_goal := false
+	var checkpoint_usage: Dictionary = {}
+
+	for tile_pos_variant in _tile_positions.keys():
+		var tile_pos := tile_pos_variant as Vector3i
+		var tile_id: StringName = _tile_positions[tile_pos]
+		var tile_def := _get_tile_definition(tile_id)
+		if not tile_def:
+			continue
+
+		match tile_def.tile_type:
+			XtremeTileDefinition.TileType.SPAWN:
+				has_spawn = true
+			XtremeTileDefinition.TileType.GOAL:
+				has_goal = true
+			XtremeTileDefinition.TileType.CHECKPOINT:
+				var props := _build_merged_tile_properties(tile_pos, tile_def)
+				var checkpoint_id := str(props.get("checkpoint_id", "checkpoint_%d_%d_%d" % [tile_pos.x, tile_pos.y, tile_pos.z]))
+				if checkpoint_id in checkpoint_usage:
+					var first_pos: Vector3i = checkpoint_usage[checkpoint_id]
+					push_warning(
+						"XtremeLevelExporter: Duplicate checkpoint_id '%s' at %s and %s" % [
+							checkpoint_id,
+							first_pos,
+							tile_pos
+						]
+					)
+				else:
+					checkpoint_usage[checkpoint_id] = tile_pos
+
+	if not has_spawn:
+		push_warning("XtremeLevelExporter: No spawn tile found in level export")
+	if not has_goal:
+		push_warning("XtremeLevelExporter: No goal tile found in level export")
 
 
 func _build_tile_lookups() -> void:
@@ -176,7 +235,8 @@ func _export_hybrid_chunked(root: Node3D) -> void:
 			continue
 
 		var rotation: Vector3i = _tile_rotations.get(tile_pos, Vector3i.ZERO)
-		if instantiate_interactive_tiles and _is_interactive_tile(tile_def):
+		var requires_runtime_interactive := _is_loop_critical_tile(tile_def)
+		if (instantiate_interactive_tiles and _is_interactive_tile(tile_def)) or requires_runtime_interactive:
 			_add_interactive_tile_instance(interactive_world, tile_pos, tile_def, rotation)
 			continue
 
@@ -678,6 +738,9 @@ func _add_interactive_tile_instance(parent: Node3D, tile_pos: Vector3i, tile_def
 		instance = tile_def.tile_scene.instantiate()
 	elif interactive_fallback_enabled:
 		instance = _create_fallback_interactive(tile_def, rotation)
+	elif _is_loop_critical_tile(tile_def):
+		# Loop-critical tiles must still export as runtime interactives.
+		instance = _create_generic_interactive_fallback(tile_def, rotation)
 
 	if not instance:
 		return
@@ -719,17 +782,26 @@ func _apply_export_properties(instance: Node, tile_pos: Vector3i, tile_def: Xtre
 	if not instance:
 		return
 
-	var merged_props := tile_def.custom_properties.duplicate(true)
-	if level_data and level_data.has_method("get_tile_instance_properties"):
-		var instance_props: Dictionary = level_data.get_tile_instance_properties(tile_pos)
-		for key in instance_props.keys():
-			merged_props[key] = instance_props[key]
+	var merged_props := _build_merged_tile_properties(tile_pos, tile_def)
 
 	instance.set_meta("xtreme_tile_id", tile_def.tile_id)
 	instance.set_meta("xtreme_tile_type", int(tile_def.tile_type))
 	instance.set_meta("xtreme_tile_properties", merged_props)
 	instance.set_meta("xtreme_grid_position", tile_pos)
 	instance.set_meta("xtreme_rotation", rotation)
+
+	match tile_def.tile_type:
+		XtremeTileDefinition.TileType.GOAL:
+			var goal_id := StringName(str(merged_props.get("goal_id", "goal_%d_%d_%d" % [tile_pos.x, tile_pos.y, tile_pos.z])))
+			instance.set_meta("xtreme_goal_id", goal_id)
+		XtremeTileDefinition.TileType.SPAWN:
+			var spawn_id := StringName(str(merged_props.get("spawn_id", "spawn_%d_%d_%d" % [tile_pos.x, tile_pos.y, tile_pos.z])))
+			instance.set_meta("xtreme_spawn_id", spawn_id)
+		XtremeTileDefinition.TileType.CHECKPOINT:
+			var checkpoint_id := StringName(str(merged_props.get("checkpoint_id", "checkpoint_%d_%d_%d" % [tile_pos.x, tile_pos.y, tile_pos.z])))
+			instance.set_meta("xtreme_checkpoint_id", checkpoint_id)
+		_:
+			pass
 
 	if instance.has_method("apply_xtreme_tile_properties"):
 		instance.call("apply_xtreme_tile_properties", merged_props)

@@ -55,6 +55,8 @@ enum State {
 }
 #endregion
 
+const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
+
 #region Exported Variables - Movement
 @export_group("Movement - Ground")
 ## Maximum walking/running speed (left/right relative to camera)
@@ -273,6 +275,14 @@ enum State {
 @export var hurt_knockback_velocity: float = 8.0
 ## Invincibility frame duration (seconds)
 @export var invincibility_duration: float = 2.0
+
+@export_group("Rings & Death")
+## Maximum number of rings spawned after taking damage.
+@export var dropped_ring_cap: int = 32
+## Base horizontal speed for dropped ring scatter.
+@export var dropped_ring_scatter_speed: float = 8.5
+## Upward speed used when rings burst out of the player.
+@export var dropped_ring_upward_speed: float = 7.0
 #endregion
 
 #region Exported Variables - References
@@ -360,6 +370,7 @@ var swim_last_input_direction: Vector3 = Vector3.ZERO
 # Hurt state
 var invincibility_timer: float = 0.0
 var is_invincible: bool = false
+var current_rings: int = 0
 
 # Input
 var input_direction: Vector2 = Vector2.ZERO
@@ -414,10 +425,14 @@ signal swim_drill_dash_started()
 signal swim_drill_dash_ended()
 signal hurt(damage_source: Node3D)
 signal rings_lost(amount: int)
+signal rings_changed(current: int)
+signal player_died(cause: StringName)
 #endregion
 
 
 func _ready() -> void:
+	add_to_group("player")
+
 	# Set up floor detection
 	floor_max_angle = deg_to_rad(max_slope_angle)
 	floor_snap_length = floor_snap_length_ground
@@ -1198,7 +1213,7 @@ func _process_light_dash(_delta: float) -> void:
 	if global_position.distance_to(target_pos) < 0.5:
 		# Collect the currency (emit signal or call method on target)
 		if target.has_method("collect"):
-			target.collect()
+			target.collect(self)
 		
 		light_dash_index += 1
 		
@@ -1473,9 +1488,13 @@ func _apply_ground_movement(delta: float) -> void:
 		var target_speed := maxf(max_speed_horizontal, max_speed_depth)
 		target_tangent = aligned_input * target_speed
 		tangent_velocity = tangent_velocity.move_toward(target_tangent, ground_acceleration * delta)
+		tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta, aligned_input)
 		_rotate_player_model_to_direction(aligned_input, delta)
 	else:
-		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, ground_deceleration * delta)
+		var slope_ratio := clampf(floor_angle / maxf(max_slope_angle, 0.001), 0.0, 1.0)
+		var effective_deceleration := ground_deceleration * lerpf(1.0, 0.35, slope_ratio)
+		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, effective_deceleration * delta)
+		tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta)
 	
 	_set_floor_tangent_velocity(tangent_velocity)
 
@@ -1550,10 +1569,7 @@ func _apply_rolling_movement(delta: float) -> void:
 	# Apply rolling friction first, then allow slope/input forces to add momentum.
 	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, roll_deceleration * delta)
 	
-	if floor_angle > 1.0:
-		var slope_direction := _get_slope_direction()
-		if slope_direction.length() > 0.001:
-			tangent_velocity += slope_direction * slope_acceleration_factor * delta
+	tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta)
 	
 	if world_input_direction.length() > 0.1:
 		var aligned_input := _get_floor_aligned_direction(world_input_direction)
@@ -1595,6 +1611,30 @@ func _get_slope_direction() -> Vector3:
 	var gravity_dir = Vector3.DOWN
 	var projected = gravity_dir - floor_normal * gravity_dir.dot(floor_normal)
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+func _apply_slope_acceleration_to_tangent(tangent_velocity: Vector3, delta: float, preferred_direction: Vector3 = Vector3.ZERO) -> Vector3:
+	if floor_angle <= 0.1:
+		return tangent_velocity
+
+	var slope_direction := _get_slope_direction()
+	if slope_direction.length() <= 0.001:
+		return tangent_velocity
+
+	var slope_ratio := clampf(floor_angle / maxf(max_slope_angle, 0.001), 0.0, 1.0)
+	var downhill_accel := slope_acceleration_factor * slope_ratio
+	var uphill_decel := slope_deceleration_factor * slope_ratio
+
+	var along_slope := tangent_velocity.dot(slope_direction)
+	if absf(along_slope) < 0.01 and preferred_direction.length() > 0.001:
+		along_slope = preferred_direction.normalized().dot(slope_direction)
+
+	if along_slope > 0.001:
+		tangent_velocity += slope_direction * downhill_accel * delta
+	elif along_slope < -0.001:
+		tangent_velocity += slope_direction * uphill_decel * delta
+
+	return tangent_velocity
 
 
 func _get_floor_aligned_direction(direction: Vector3) -> Vector3:
@@ -2629,14 +2669,78 @@ func _exit_swimming() -> void:
 
 
 #region Damage Handling
+func add_rings(count: int) -> void:
+	if count <= 0:
+		return
+	set_rings(current_rings + count)
+
+
+func set_rings(count: int) -> void:
+	var clamped := maxi(count, 0)
+	if clamped == current_rings:
+		return
+	current_rings = clamped
+	rings_changed.emit(current_rings)
+
+
+func kill(cause: StringName = &"hazard") -> void:
+	# Exit locked traversal states before handing death over to the game manager.
+	if current_state == State.RAIL_GRINDING:
+		_exit_rail(true)
+	elif current_state == State.AUTO_PATH:
+		_exit_auto_path()
+	_end_light_dash()
+
+	player_died.emit(cause)
+
+	var game_manager := _find_game_manager()
+	if game_manager and game_manager.has_method("player_died"):
+		game_manager.player_died(cause)
+		return
+
+	# Fallback for scenes without a game manager.
+	velocity = Vector3.ZERO
+	_change_state(State.IDLE)
+
+
+func respawn_at(spawn_transform: Transform3D) -> void:
+	if current_state == State.RAIL_GRINDING:
+		_exit_rail(true)
+	elif current_state == State.AUTO_PATH:
+		_exit_auto_path()
+	_end_light_dash()
+
+	global_transform = spawn_transform
+	velocity = Vector3.ZERO
+	is_invincible = false
+	invincibility_timer = 0.0
+	air_jump_available = true
+	set_rings(0)
+	_change_state(State.IDLE)
+
+
 ## Call this method when the player takes damage
-func take_damage(damage_source: Node3D = null, ring_loss: int = 10) -> void:
+func take_damage(damage_source: Node3D = null, _ring_loss: int = 10) -> void:
 	if is_invincible:
 		return
-	
-	# Enter hurt state
+
+	if _is_instant_death_source(damage_source):
+		kill(&"instant_death")
+		return
+
+	if current_rings <= 0:
+		kill(&"hazard")
+		return
+
+	# Enter hurt state with ring burst.
 	hurt.emit(damage_source)
-	rings_lost.emit(ring_loss)
+	_report_damage_to_game_manager(1)
+
+	var previous_rings := current_rings
+	var burst_count := mini(previous_rings, maxi(dropped_ring_cap, 0))
+	set_rings(0)
+	rings_lost.emit(previous_rings)
+	_spawn_dropped_rings(burst_count)
 	
 	# Apply knockback
 	var knockback_direction = -global_transform.basis.z  # Default: backward
@@ -2662,3 +2766,80 @@ func on_enemy_bounce_hit(enemy: Node3D) -> void:
 	is_at_bounce_apex = false
 	_change_state(State.BUTT_BOUNCE_REBOUNDING)
 #endregion
+
+
+func _spawn_dropped_rings(count: int) -> void:
+	if count <= 0:
+		return
+	if DROPPED_RING_SCRIPT == null:
+		return
+
+	var tree := get_tree()
+	if tree == null:
+		return
+
+	var parent_node := tree.current_scene
+	if parent_node == null:
+		parent_node = get_parent()
+	if parent_node == null:
+		return
+
+	var safe_count := maxi(count, 1)
+	for i in range(safe_count):
+		var ring := DROPPED_RING_SCRIPT.new() as Area3D
+		if ring == null:
+			continue
+
+		var angle := (TAU * float(i) / float(safe_count)) + randf_range(-0.2, 0.2)
+		var lateral_speed := dropped_ring_scatter_speed * randf_range(0.75, 1.2)
+		var initial_velocity := Vector3(
+			cos(angle) * lateral_speed,
+			dropped_ring_upward_speed * randf_range(0.75, 1.15),
+			sin(angle) * lateral_speed
+		)
+
+		ring.set("initial_velocity", initial_velocity)
+		ring.set("value", 1)
+		ring.global_position = global_position + Vector3.UP * 0.8
+		parent_node.add_child(ring)
+
+
+func _is_instant_death_source(damage_source: Node3D) -> bool:
+	if damage_source == null:
+		return false
+	if bool(damage_source.get_meta("instant_death", false)):
+		return true
+	if damage_source.has_meta("xtreme_tile_properties"):
+		var props_variant: Variant = damage_source.get_meta("xtreme_tile_properties")
+		if props_variant is Dictionary and bool((props_variant as Dictionary).get("instant_death", false)):
+			return true
+	if damage_source.has_method("get"):
+		var props: Variant = damage_source.get("custom_properties")
+		if props is Dictionary and bool((props as Dictionary).get("instant_death", false)):
+			return true
+	return false
+
+
+func _find_game_manager() -> Node:
+	var tree := get_tree()
+	if tree == null:
+		return null
+
+	var by_group := tree.get_first_node_in_group("xtreme_game_manager")
+	if by_group:
+		return by_group
+
+	var root := tree.get_root()
+	if root == null:
+		return null
+
+	for child in root.get_children():
+		if child is XtremeGameManager:
+			return child
+	return null
+
+
+func _report_damage_to_game_manager(amount: int) -> void:
+	var game_manager := _find_game_manager()
+	if game_manager and game_manager.has_method("take_damage"):
+		game_manager.take_damage(maxi(amount, 1))

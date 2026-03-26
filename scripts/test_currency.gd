@@ -129,16 +129,20 @@ func _on_body_entered(body: Node3D) -> void:
 	
 	# Check if it's the player
 	if body is PlayerController:
-		collect()
+		collect(body as PlayerController)
 
 
 ## Called by player controller during light dash or by collision
-func collect() -> void:
+func collect(player: PlayerController = null) -> void:
 	if _collected or not collectible:
 		return
 	
 	_collected = true
 	collected.emit(self)
+
+	if player and player.has_method("add_rings"):
+		player.add_rings(maxi(value, 1))
+
 	_spawn_light_dash_residual()
 	
 	# Disable collision immediately to prevent double-collection
