@@ -69,12 +69,34 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var ground_deceleration: float = 30.0
 ## Ground deceleration while actively braking (opposite input)
 @export var ground_brake_deceleration: float = 60.0
+## Traction force applied at low speed (high steering authority)
+@export var ground_traction_low_speed: float = 56.0
+## Traction force applied at high speed (reduced steering authority)
+@export var ground_traction_high_speed: float = 20.0
+## Speed where traction interpolation reaches the high-speed value
+@export var traction_tier_speed: float = 24.0
+## Drag while actively steering
+@export var ground_drag_active: float = 5.0
+## Drag while coasting/no input
+@export var ground_drag_coast: float = 9.0
+## Soft speed-limit correction force (0 = hard clamp)
+@export var ground_soft_speed_limit_force: float = 16.0
 
 @export_group("Movement - Air")
 ## Air control acceleration (how much you can influence direction mid-air)
 @export var air_acceleration: float = 20.0
 ## Air deceleration
 @export var air_deceleration: float = 5.0
+## Additive steering force while airborne
+@export var air_steer_force: float = 16.0
+## Maximum directional turn rate in air (radians/sec)
+@export var air_turn_rate: float = 6.0
+## Baseline horizontal drag in air
+@export var air_drag: float = 1.2
+## Multiplier for soft horizontal air speed cap
+@export var air_speed_limit_multiplier: float = 1.2
+## Soft air speed-limit correction force (0 = hard clamp)
+@export var air_soft_speed_limit_force: float = 8.0
 ## Gravity strength
 @export var gravity: float = 40.0
 ## Terminal velocity (max fall speed)
@@ -83,18 +105,22 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export_group("Movement - Slopes")
 ## Maximum slope angle the player can climb (degrees)
 @export var max_slope_angle: float = 70.0
-## Slope acceleration factor (how much downhill speeds you up)
+## Projected gravity force along the floor tangent
+@export var slope_gravity_force: float = 42.0
+## Legacy downhill acceleration tuning (kept for compatibility)
 @export var slope_acceleration_factor: float = 15.0
-## Slope deceleration factor (how much uphill slows you down)
+## Legacy uphill deceleration tuning (kept for compatibility)
 @export var slope_deceleration_factor: float = 20.0
-## Minimum floor angle (degrees) before downhill release logic can trigger.
-@export var downhill_release_min_angle: float = 16.0
-## Minimum tangent speed before downhill release can trigger.
-@export var downhill_release_min_speed: float = 6.0
-## Upward impulse applied when releasing from a downhill slope.
-@export var downhill_release_bump_impulse: float = 2.0
-## How long floor snap is disabled after a downhill release.
-@export var downhill_release_snap_disable_time: float = 0.08
+## Normal-speed threshold to detach from crest and go ballistic
+@export var crest_detach_normal_speed: float = 1.8
+## Floor angle where snap can be released when moving downhill fast
+@export var slope_snap_release_angle: float = 18.0
+## Minimum speed needed before downhill snap release can occur
+@export var slope_snap_release_speed: float = 15.0
+## Minimum downhill alignment to release floor snap
+@export var slope_snap_release_alignment: float = 0.35
+## Extra downhill impulse when forced off a too-steep floor
+@export var steep_slope_detach_push: float = 3.0
 ## Floor snap length while grounded (smaller values reduce ramp sticking)
 @export var floor_snap_length_ground: float = 0.05
 ## Time to disable floor snapping right after leaving a ramp (seconds)
@@ -123,6 +149,8 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export_group("Skidding")
 ## Deceleration rate while skidding
 @export var skid_deceleration: float = 50.0
+## Brake force while skidding in momentum mode
+@export var skid_brake_force: float = 72.0
 ## Minimum speed to trigger a skid (below this, just turn normally)
 @export var skid_min_speed: float = 5.0
 ## Threshold for detecting opposite input (dot product, -1 = perfect opposite)
@@ -141,6 +169,10 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var roll_attack_boost: float = 5.0
 ## Rolling deceleration on flat ground
 @export var roll_deceleration: float = 8.0
+## Traction multiplier while rolling (lower = less steering authority)
+@export var roll_traction_multiplier: float = 0.35
+## Drag multiplier while rolling (lower = more momentum carry)
+@export var roll_drag_multiplier: float = 0.45
 ## Rolling minimum speed (below this, exit roll)
 @export var roll_min_speed: float = 2.0
 ## Time before roll automatically stops (seconds)
@@ -395,7 +427,7 @@ var floor_angle: float = 0.0
 var _last_floor_normal: Vector3 = Vector3.UP
 var _last_floor_tangent_velocity: Vector3 = Vector3.ZERO
 var _ramp_detach_timer: float = 0.0
-var _downhill_release_active: bool = false
+var _guided_entry_velocity: Vector3 = Vector3.ZERO
 
 # PERFORMANCE: Cached camera vectors (updated once per frame)
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
@@ -445,6 +477,15 @@ func _ready() -> void:
 	# Set up floor detection
 	floor_max_angle = deg_to_rad(max_slope_angle)
 	floor_snap_length = floor_snap_length_ground
+	if is_equal_approx(slope_gravity_force, 42.0):
+		# Preserve behavior in projects tuned before the momentum refactor.
+		slope_gravity_force = maxf(slope_acceleration_factor * 2.8, 1.0)
+	if is_equal_approx(ground_traction_low_speed, 56.0):
+		ground_traction_low_speed = maxf(ground_acceleration * 1.4, 1.0)
+	if is_equal_approx(ground_traction_high_speed, 20.0):
+		ground_traction_high_speed = maxf(ground_acceleration * 0.5, 1.0)
+	if is_equal_approx(air_steer_force, 16.0):
+		air_steer_force = maxf(air_acceleration * 0.8, 1.0)
 	
 	# Initialize state
 	_change_state(State.IDLE)
@@ -579,6 +620,9 @@ func _update_grounded_status() -> void:
 	if is_grounded:
 		floor_normal = get_floor_normal()
 		floor_angle = rad_to_deg(acos(clampf(floor_normal.dot(Vector3.UP), -1.0, 1.0)))
+		if floor_angle > max_slope_angle:
+			_force_detach_from_steep_floor()
+			return
 		_last_floor_normal = floor_normal
 		_last_floor_tangent_velocity = velocity.slide(floor_normal)
 		coyote_timer = coyote_time
@@ -589,7 +633,6 @@ func _update_grounded_status() -> void:
 	else:
 		floor_normal = Vector3.UP
 		floor_angle = 0.0
-		_downhill_release_active = false
 		
 		# Preserve tangent momentum only for ground-driven ramp exits (not jump launches)
 		if was_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
@@ -626,20 +669,58 @@ func _update_floor_snap_state() -> void:
 		floor_snap_length = 0.0
 		return
 	
-	if _should_release_downhill():
-		floor_snap_length = 0.0
-		if not _downhill_release_active:
-			_downhill_release_active = true
-			_ramp_detach_timer = maxf(_ramp_detach_timer, downhill_release_snap_disable_time)
-			velocity += floor_normal * downhill_release_bump_impulse
-		return
-	
-	_downhill_release_active = false
-	
-	if is_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
+	if _should_use_floor_snap():
 		floor_snap_length = floor_snap_length_ground
 	else:
 		floor_snap_length = 0.0
+
+
+func _force_detach_from_steep_floor() -> void:
+	var slope_direction := _get_slope_direction()
+	var floor_tangent := velocity.slide(floor_normal)
+	var carry_speed := floor_tangent.length()
+	var carry_direction := slope_direction
+	if carry_direction.length() < 0.001 and floor_tangent.length() > 0.001:
+		carry_direction = floor_tangent.normalized()
+	if carry_direction.length() > 0.001:
+		floor_tangent = carry_direction * maxf(carry_speed, steep_slope_detach_push)
+	
+	velocity = floor_tangent
+	_ramp_detach_timer = maxf(_ramp_detach_timer, ramp_detach_snap_disable_time)
+	is_grounded = false
+	floor_normal = Vector3.UP
+	floor_angle = 0.0
+	air_jump_available = true
+	_change_state(State.AIRBORNE)
+
+
+func _should_use_floor_snap() -> bool:
+	if not is_grounded:
+		return false
+	if not _is_ground_movement_state(current_state):
+		return false
+	if floor_angle <= 0.1:
+		return true
+	
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	var tangent_speed := tangent_velocity.length()
+	if tangent_speed < 0.1:
+		return true
+	
+	var normal_speed := velocity.dot(floor_normal)
+	if normal_speed > crest_detach_normal_speed:
+		_ramp_detach_timer = maxf(_ramp_detach_timer, ramp_detach_snap_disable_time)
+		return false
+	
+	if floor_angle >= slope_snap_release_angle and tangent_speed >= slope_snap_release_speed:
+		var slope_direction := _get_slope_direction()
+		if slope_direction.length() > 0.001:
+			var downhill_alignment := tangent_velocity.normalized().dot(slope_direction)
+			if downhill_alignment > slope_snap_release_alignment:
+				_ramp_detach_timer = maxf(_ramp_detach_timer, ramp_detach_snap_disable_time * 0.8)
+				return false
+	
+	return true
 
 
 func _update_invincibility(delta: float) -> void:
@@ -848,16 +929,16 @@ func _process_moving(delta: float) -> void:
 		return
 	
 	# Check for skidding (opposite input while moving fast enough)
-	var horizontal_velocity = Vector3(velocity.x, 0, velocity.z)
-	if horizontal_velocity.length() >= skid_min_speed and world_input_direction.length() > 0.1:
-		var velocity_dir = horizontal_velocity.normalized()
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	if tangent_velocity.length() >= skid_min_speed and world_input_direction.length() > 0.1:
+		var velocity_dir := tangent_velocity.normalized()
 		var input_dot = velocity_dir.dot(world_input_direction)
 		if input_dot <= skid_opposite_threshold:
 			_change_state(State.SKIDDING)
 			return
 	
-	# Check for return to idle
-	if world_input_direction.length() < 0.1:
+	# Check for return to idle only when nearly stopped.
+	if world_input_direction.length() < 0.1 and tangent_velocity.length() < 0.25:
 		_change_state(State.IDLE)
 		return
 	
@@ -875,15 +956,15 @@ func _process_skidding(delta: float) -> void:
 		_change_state(State.SIDE_JUMP)
 		return
 	
-	# Apply skid deceleration
-	var horizontal = Vector3(velocity.x, 0, velocity.z)
-	horizontal = horizontal.move_toward(Vector3.ZERO, skid_deceleration * delta)
-	velocity.x = horizontal.x
-	velocity.z = horizontal.z
-	_conform_ground_velocity_to_floor()
+	# Apply SA-style heavy braking while still honoring slope gravity.
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta)
+	var skid_brake := maxf(skid_brake_force, skid_deceleration)
+	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, skid_brake * delta)
+	_set_floor_tangent_velocity(tangent_velocity)
 	
 	# When stopped or nearly stopped, transition to moving in new direction
-	if horizontal.length() < 0.5:
+	if tangent_velocity.length() < 0.5:
 		# Now moving in the input direction
 		if world_input_direction.length() > 0.1:
 			_change_state(State.MOVING)
@@ -896,7 +977,7 @@ func _process_skidding(delta: float) -> void:
 		_change_state(State.MOVING)
 		return
 	
-	var velocity_dir = horizontal.normalized()
+	var velocity_dir = tangent_velocity.normalized()
 	var input_dot = velocity_dir.dot(world_input_direction)
 	if input_dot > 0:  # No longer pressing opposite direction
 		_change_state(State.MOVING)
@@ -947,9 +1028,9 @@ func _process_rolling(delta: float) -> void:
 		return
 	
 	# Exit roll if holding forward direction (same direction as roll)
-	var horizontal_velocity = Vector3(velocity.x, 0, velocity.z)
-	if horizontal_velocity.length() > 0.1 and world_input_direction.length() > 0.1:
-		var velocity_dir = horizontal_velocity.normalized()
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	if tangent_velocity.length() > 0.1 and world_input_direction.length() > 0.1:
+		var velocity_dir := tangent_velocity.normalized()
 		var input_dot = velocity_dir.dot(world_input_direction)
 		if input_dot > 0.7:  # Holding roughly forward
 			_change_state(State.MOVING)
@@ -958,11 +1039,11 @@ func _process_rolling(delta: float) -> void:
 	# Auto-stop after time limit
 	var auto_stop_time := roll_auto_stop_time * (roll_attack_duration_multiplier if roll_is_attack else 1.0)
 	if roll_timer >= auto_stop_time:
-		_change_state(State.IDLE if horizontal_velocity.length() < roll_min_speed else State.MOVING)
+		_change_state(State.IDLE if tangent_velocity.length() < roll_min_speed else State.MOVING)
 		return
 	
 	# Exit roll if too slow
-	if horizontal_velocity.length() < roll_min_speed:
+	if tangent_velocity.length() < roll_min_speed:
 		_change_state(State.IDLE)
 		return
 	
@@ -1500,23 +1581,7 @@ func _process_hurt(delta: float) -> void:
 
 #region Movement Helpers
 func _apply_ground_movement(delta: float) -> void:
-	var tangent_velocity := _get_floor_tangent_velocity(velocity)
-	var target_tangent := Vector3.ZERO
-	
-	if world_input_direction.length() > 0.1:
-		var aligned_input := _get_floor_aligned_direction(world_input_direction)
-		var target_speed := maxf(max_speed_horizontal, max_speed_depth)
-		target_tangent = aligned_input * target_speed
-		tangent_velocity = tangent_velocity.move_toward(target_tangent, ground_acceleration * delta)
-		tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta, aligned_input)
-		_rotate_player_model_to_direction(aligned_input, delta)
-	else:
-		var slope_ratio := clampf(floor_angle / maxf(max_slope_angle, 0.001), 0.0, 1.0)
-		var effective_deceleration := ground_deceleration * lerpf(1.0, 0.35, slope_ratio)
-		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, effective_deceleration * delta)
-		tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta)
-	
-	_set_floor_tangent_velocity(tangent_velocity)
+	_integrate_ground_momentum(delta, world_input_direction)
 
 
 ## Rotates the player model to face a given direction (for visual feedback)
@@ -1578,42 +1643,43 @@ func _get_facing_direction() -> Vector3:
 
 
 func _apply_ground_friction(delta: float) -> void:
-	var tangent_velocity := _get_floor_tangent_velocity(velocity)
-	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, ground_deceleration * delta)
-	_set_floor_tangent_velocity(tangent_velocity)
+	_integrate_ground_momentum(delta, Vector3.ZERO, 0.0, 1.1, 1.0, 1.0)
 
 
 func _apply_rolling_movement(delta: float) -> void:
-	var tangent_velocity := _get_floor_tangent_velocity(velocity)
-	
-	# Apply rolling friction first, then allow slope/input forces to add momentum.
-	tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, roll_deceleration * delta)
-	
-	tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta)
-	
-	if world_input_direction.length() > 0.1:
-		var aligned_input := _get_floor_aligned_direction(world_input_direction)
-		tangent_velocity += aligned_input * ground_acceleration * 0.35 * delta
-	
-	_set_floor_tangent_velocity(tangent_velocity)
+	var legacy_roll_drag_scale := maxf(roll_deceleration / maxf(ground_deceleration, 0.001), 0.15)
+	_integrate_ground_momentum(
+		delta,
+		world_input_direction,
+		roll_traction_multiplier,
+		roll_drag_multiplier * legacy_roll_drag_scale,
+		0.85,
+		1.4
+	)
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
-	if world_input_direction.length() > 0.1:
-		var horizontal = Vector3(velocity.x, 0, velocity.z)
-		var target_direction = world_input_direction * air_acceleration * control_multiplier * delta
-		horizontal += Vector3(target_direction.x, 0, target_direction.z)
-		
-		# Clamp to max air speed
-		var max_air_speed = maxf(max_speed_horizontal, max_speed_depth)
-		if horizontal.length() > max_air_speed:
-			horizontal = horizontal.normalized() * max_air_speed
-		
-		velocity.x = horizontal.x
-		velocity.z = horizontal.z
-		
-		# Rotate player model toward movement direction
-		_rotate_player_model_to_direction(world_input_direction, delta)
+	var horizontal := Vector3(velocity.x, 0.0, velocity.z)
+	var has_input := world_input_direction.length() > 0.1
+	
+	if has_input:
+		var desired_dir := world_input_direction.normalized()
+		horizontal += desired_dir * air_steer_force * control_multiplier * delta
+		if horizontal.length() > 0.1:
+			var current_dir := horizontal.normalized()
+			var turn_t := clampf(air_turn_rate * control_multiplier * delta, 0.0, 1.0)
+			var steered_dir := current_dir.slerp(desired_dir, turn_t).normalized()
+			horizontal = steered_dir * horizontal.length()
+		_rotate_player_model_to_direction(desired_dir, delta)
+	
+	var drag := air_drag if has_input else (air_drag + air_deceleration)
+	horizontal = horizontal.move_toward(Vector3.ZERO, drag * delta)
+	
+	var max_air_speed := maxf(max_speed_horizontal, max_speed_depth) * maxf(air_speed_limit_multiplier, 0.1)
+	horizontal = _apply_soft_speed_limit(horizontal, max_air_speed, air_soft_speed_limit_force, delta)
+	
+	velocity.x = horizontal.x
+	velocity.z = horizontal.z
 
 
 func _apply_gravity(delta: float) -> void:
@@ -1633,25 +1699,69 @@ func _get_slope_direction() -> Vector3:
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
 
 
-func _should_release_downhill() -> bool:
-	if not is_grounded:
-		return false
-	if floor_angle < downhill_release_min_angle:
-		return false
-	if not current_state in [State.MOVING, State.ROLLING, State.SKIDDING]:
-		return false
-	
-	var slope_direction := _get_slope_direction()
-	if slope_direction.length() <= 0.001:
-		return false
-	
+func _integrate_ground_momentum(
+	delta: float,
+	desired_world_direction: Vector3 = Vector3.ZERO,
+	traction_multiplier: float = 1.0,
+	drag_multiplier: float = 1.0,
+	brake_multiplier: float = 1.0,
+	speed_limit_multiplier: float = 1.0
+) -> void:
 	var tangent_velocity := _get_floor_tangent_velocity(velocity)
-	var tangent_speed := tangent_velocity.length()
-	if tangent_speed < downhill_release_min_speed:
-		return false
+	var desired_direction := Vector3.ZERO
+	if desired_world_direction.length() > 0.1:
+		desired_direction = _get_floor_aligned_direction(desired_world_direction)
 	
-	var downhill_alignment := tangent_velocity.normalized().dot(slope_direction)
-	return downhill_alignment > 0.2
+	var speed := tangent_velocity.length()
+	if desired_direction.length() > 0.001:
+		var traction_force := _get_speed_tier_force(speed) * traction_multiplier
+		var heading_alignment := 1.0
+		if speed > 0.1:
+			heading_alignment = tangent_velocity.normalized().dot(desired_direction)
+		
+		if heading_alignment < 0.0:
+			traction_force += ground_brake_deceleration * -heading_alignment * brake_multiplier
+		
+		tangent_velocity += desired_direction * traction_force * delta
+	
+	tangent_velocity = _apply_slope_acceleration_to_tangent(tangent_velocity, delta, desired_direction)
+	
+	var drag_force := ground_drag_active if desired_direction.length() > 0.001 else ground_drag_coast
+	drag_force *= drag_multiplier
+	if drag_force > 0.0:
+		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, drag_force * delta)
+	
+	var soft_limit := maxf(max_speed_horizontal, max_speed_depth) * speed_limit_multiplier
+	tangent_velocity = _apply_soft_speed_limit(tangent_velocity, soft_limit, ground_soft_speed_limit_force, delta)
+	
+	_set_floor_tangent_velocity(tangent_velocity)
+	if desired_direction.length() > 0.001:
+		_rotate_player_model_to_direction(desired_direction, delta)
+	elif tangent_velocity.length() > 0.1:
+		_rotate_player_model_to_direction(tangent_velocity.normalized(), delta)
+
+
+func _get_speed_tier_force(speed: float) -> float:
+	var t := clampf(speed / maxf(traction_tier_speed, 0.001), 0.0, 1.0)
+	return lerpf(ground_traction_low_speed, ground_traction_high_speed, t)
+
+
+func _apply_soft_speed_limit(current_velocity: Vector3, max_speed: float, correction_force: float, delta: float) -> Vector3:
+	if max_speed <= 0.0:
+		return current_velocity
+	
+	var speed := current_velocity.length()
+	if speed <= max_speed:
+		return current_velocity
+	
+	var target := current_velocity.normalized() * max_speed
+	if correction_force <= 0.0:
+		return target
+	return current_velocity.move_toward(target, correction_force * delta)
+
+
+func _is_ground_movement_state(state: State) -> bool:
+	return state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]
 
 
 func _apply_slope_acceleration_to_tangent(tangent_velocity: Vector3, delta: float, preferred_direction: Vector3 = Vector3.ZERO) -> Vector3:
@@ -1663,17 +1773,13 @@ func _apply_slope_acceleration_to_tangent(tangent_velocity: Vector3, delta: floa
 		return tangent_velocity
 
 	var slope_ratio := clampf(floor_angle / maxf(max_slope_angle, 0.001), 0.0, 1.0)
-	var downhill_accel := slope_acceleration_factor * slope_ratio
-	var uphill_decel := slope_deceleration_factor * slope_ratio
-
-	var along_slope := tangent_velocity.dot(slope_direction)
-	if absf(along_slope) < 0.01 and preferred_direction.length() > 0.001:
-		along_slope = preferred_direction.normalized().dot(slope_direction)
-
-	if along_slope > 0.001:
-		tangent_velocity += slope_direction * downhill_accel * delta
-	elif along_slope < -0.001:
-		tangent_velocity += slope_direction * uphill_decel * delta
+	tangent_velocity += slope_direction * slope_gravity_force * slope_ratio * delta
+	
+	# Extra uphill resistance when actively trying to climb.
+	if preferred_direction.length() > 0.001:
+		var climb_alignment := preferred_direction.normalized().dot(slope_direction)
+		if climb_alignment < 0.0:
+			tangent_velocity += preferred_direction.normalized() * slope_deceleration_factor * slope_ratio * climb_alignment * delta
 
 	return tangent_velocity
 
@@ -1721,12 +1827,8 @@ func _set_floor_tangent_velocity(tangent_velocity: Vector3) -> void:
 	if is_grounded and floor_angle > 0.1:
 		var tangent := tangent_velocity.slide(floor_normal)
 		_last_floor_tangent_velocity = tangent
-		velocity = tangent
-		
-		# Strip residual upward normal speed so crests release cleanly.
-		var normal_speed := velocity.dot(floor_normal)
-		if normal_speed > 0.0:
-			velocity -= floor_normal * normal_speed
+		var preserved_normal_speed := maxf(velocity.dot(floor_normal), 0.0)
+		velocity = tangent + floor_normal * preserved_normal_speed
 	else:
 		_last_floor_tangent_velocity = Vector3(tangent_velocity.x, 0.0, tangent_velocity.z)
 		velocity.x = tangent_velocity.x
@@ -2052,6 +2154,7 @@ func _check_light_dash() -> bool:
 		light_dash_path = _build_light_dash_path(nearest_currency)
 		if light_dash_path.size() > 0:
 			light_dash_index = 0
+			_guided_entry_velocity = velocity
 			_change_state(State.LIGHT_DASH)
 			return true
 	
@@ -2218,9 +2321,17 @@ func _end_light_dash() -> void:
 	light_dash_ended.emit()
 	
 	# Transition based on grounded state
+	var preserved_horizontal := Vector3(velocity.x, 0.0, velocity.z)
+	if preserved_horizontal.length() < 0.1:
+		preserved_horizontal = Vector3(_guided_entry_velocity.x, 0.0, _guided_entry_velocity.z)
+	velocity.x = preserved_horizontal.x
+	velocity.z = preserved_horizontal.z
+	
 	if is_grounded:
-		velocity = Vector3.ZERO
-		_change_state(State.IDLE)
+		if preserved_horizontal.length() > 0.5:
+			_change_state(State.MOVING)
+		else:
+			_change_state(State.IDLE)
 	else:
 		_change_state(State.AIRBORNE)
 #endregion
@@ -2471,6 +2582,7 @@ func start_auto_path(
 	auto_path_speed = speed if speed > 0 else auto_path_default_speed
 	auto_path_exit_jump_velocity = maxf(exit_jump_velocity, 0.0)
 	auto_path_mount_height_offset = mount_height_offset
+	_guided_entry_velocity = velocity
 	
 	# Create PathFollow3D
 	auto_path_follow = PathFollow3D.new()
@@ -2506,7 +2618,8 @@ func _exit_auto_path(reached_end: bool = false) -> void:
 	# Determine exit state based on environment
 	if current_state == State.AUTO_PATH:
 		# Preserve forward carry speed when leaving scripted movement.
-		var carry_speed := maxf(absf(auto_path_speed) * auto_path_end_forward_speed_scale, auto_path_end_min_forward_speed)
+		var entry_carry := Vector3(_guided_entry_velocity.x, 0.0, _guided_entry_velocity.z).length() * 0.6
+		var carry_speed := maxf(maxf(absf(auto_path_speed) * auto_path_end_forward_speed_scale, auto_path_end_min_forward_speed), entry_carry)
 		velocity = exit_horizontal * carry_speed
 		if reached_end and auto_path_exit_jump_velocity > 0.0:
 			velocity.y = auto_path_exit_jump_velocity
