@@ -27,6 +27,7 @@ emission_energy_multiplier = 0.8
 script = ExtResource("1_p5ehy")
 max_speed_horizontal = 7.0
 ground_acceleration = 20.0
+double_jump_velocity = 20.0
 spin_dash_min_speed = 20.0
 spin_dash_max_speed = 40.0
 roll_attack_boost = 20.0

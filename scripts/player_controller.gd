@@ -1857,25 +1857,22 @@ func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
 			var current_dir := horizontal / speed
 			var alignment := current_dir.dot(desired_dir)
 			
-			# Snappy arcade steering, with extra authority while reversing.
-			var turn_multiplier: float = 2.2 if alignment >= 0.0 else 3.0
+			# Snappy turning without instant direction flips.
+			var turn_multiplier: float = 2.6 if alignment >= 0.0 else 1.9
 			var turn_t := clampf(air_turn_rate * turn_multiplier * control_multiplier * delta, 0.0, 1.0)
 			var steered_dir := current_dir.lerp(desired_dir, turn_t)
 			if steered_dir.length() <= 0.001:
 				steered_dir = desired_dir
 			steered_dir = steered_dir.normalized()
 			
-			# Opposite input: bleed speed first, then rebuild in the new direction.
+			# Opposite input: lose momentum first, then build it in the new heading.
 			if alignment < 0.0:
-				var reverse_brake := air_deceleration * (1.0 + -alignment * 2.0) * control_multiplier
+				var reverse_brake := air_deceleration * (1.0 + -alignment * 1.5) * control_multiplier
 				speed = maxf(speed - reverse_brake * delta, 0.0)
-			elif drive_cap > 0.0:
+				if drive_cap > 0.0 and speed <= drive_cap * 0.35:
+					speed = minf(speed + air_acceleration * control_multiplier * delta, drive_cap)
+			elif drive_cap > 0.0 and speed < drive_cap:
 				speed = minf(speed + air_acceleration * control_multiplier * delta, drive_cap)
-			
-			# Prevent rare full horizontal cancellation while input is held.
-			if drive_cap > 0.0 and speed < 0.12:
-				var min_air_control_speed := maxf(air_acceleration * control_multiplier * delta * 0.75, 0.12)
-				speed = minf(min_air_control_speed, drive_cap)
 			
 			horizontal = steered_dir * speed
 		else:
@@ -1886,7 +1883,7 @@ func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
 		
 		_rotate_player_model_to_direction(desired_dir, delta, movement_facing_rotation_speed)
 	
-	var drag := air_drag if has_input else (air_drag + air_deceleration * 0.65)
+	var drag := (air_drag * 0.45) if has_input else (air_drag + air_deceleration * 0.65)
 	horizontal = horizontal.move_toward(Vector3.ZERO, drag * delta)
 	
 	if air_cap > 0.0:
@@ -2135,6 +2132,33 @@ func _perform_jump() -> void:
 
 func _perform_double_jump() -> void:
 	velocity.y = double_jump_velocity
+	# Double jump only cancels horizontal momentum when input is opposite current motion.
+	var horizontal := Vector3(velocity.x, 0.0, velocity.z)
+	var speed := horizontal.length()
+	var has_input := world_input_direction.length() > 0.1
+	if has_input and speed > 0.1:
+		var desired_dir := world_input_direction.normalized()
+		var current_dir := horizontal / speed
+		var alignment := current_dir.dot(desired_dir)
+		if alignment < -0.1:
+			# Opposite input: kill carry so player can reverse direction cleanly.
+			horizontal = Vector3.ZERO
+			_airborne_speed_ceiling = _get_effective_core_cap_for_state(State.AIRBORNE)
+		else:
+			# Same/side input: keep momentum and bias heading toward the pressed direction.
+			var assist_turn := 0.45
+			var assisted_dir := current_dir.lerp(desired_dir, assist_turn)
+			if assisted_dir.length() > 0.001:
+				horizontal = assisted_dir.normalized() * speed
+			_airborne_speed_ceiling = maxf(_airborne_speed_ceiling, speed)
+	elif has_input and speed <= 0.1:
+		# From near-standstill, give a small nudge toward intended direction.
+		var start_speed := minf(air_acceleration * 0.25, _get_effective_core_cap_for_state(State.IDLE))
+		horizontal = world_input_direction.normalized() * start_speed
+		_airborne_speed_ceiling = maxf(_airborne_speed_ceiling, start_speed)
+	
+	velocity.x = horizontal.x
+	velocity.z = horizontal.z
 	air_jump_available = false
 	double_jumped.emit()
 
