@@ -86,8 +86,26 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var ground_drag_active: float = 5.0
 ## Drag while coasting/no input
 @export var ground_drag_coast: float = 9.0
-## Soft speed-limit correction force (0 = hard clamp)
+## Deprecated legacy soft-limit force (kept for compatibility).
 @export var ground_soft_speed_limit_force: float = 16.0
+## Walk/run cap scale applied to the universal locomotion cap.
+@export var movement_cruise_speed_scale: float = 1.0
+## Deprecated: hard cap removed; kept for compatibility with existing scene data.
+@export var movement_hard_speed_cap_scale: float = 0.0
+## How quickly grounded momentum direction snaps toward input.
+@export var ground_direction_snap_rate: float = 16.0
+## How quickly the model rotates to face intended movement.
+@export var movement_facing_rotation_speed: float = 24.0
+## Universal cap used by core locomotion states.
+@export var universal_speed_cap: float = 24.0
+## Walk/run speed ratio of the universal cap.
+@export var walk_run_speed_ratio: float = 0.60
+## Temporary burst ratio (spin dash + roll) of the universal cap.
+@export var burst_speed_ratio: float = 0.85
+## Core cap correction force used by soft clamping.
+@export var core_soft_cap_force: float = 16.0
+## Explicit cap override multiplier for scripted buffs.
+@export var cap_override_multiplier: float = 1.0
 
 @export_group("Movement - Air")
 ## Air control acceleration (how much you can influence direction mid-air)
@@ -186,6 +204,10 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var roll_auto_stop_time: float = 3.0
 ## Multiplier for roll attack duration (moving + CTRL)
 @export var roll_attack_duration_multiplier: float = 4.0
+## Minimum roll-attack duration (seconds)
+@export var roll_attack_min_duration: float = 3.5
+## Maximum roll-attack duration (seconds)
+@export var roll_attack_max_duration: float = 5.0
 #endregion
 
 #region Exported Variables - Homing Attack
@@ -358,6 +380,16 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var player_model: Node3D
 ## True if the model's forward is -Z (Godot default); false if forward is +Z
 @export var model_forward_is_negative_z: bool = true
+
+@export_group("Spin/Roll Visual")
+## Show a translucent sphere overlay while spin dash charging and rolling.
+@export var spin_roll_visual_enabled: bool = true
+## Overlay tint (alpha controls transparency).
+@export var spin_roll_visual_tint: Color = Color(0.55, 0.9, 1.0, 0.28)
+## Uniform visual scale for the sphere overlay.
+@export var spin_roll_visual_scale: float = 1.35
+## Vertical offset applied to the overlay node.
+@export var spin_roll_visual_y_offset: float = 0.0
 #endregion
 
 #region State Variables
@@ -470,6 +502,8 @@ var _last_floor_normal: Vector3 = Vector3.UP
 var _last_floor_tangent_velocity: Vector3 = Vector3.ZERO
 var _ramp_detach_timer: float = 0.0
 var _guided_entry_velocity: Vector3 = Vector3.ZERO
+var _spin_roll_visual: MeshInstance3D = null
+var _airborne_speed_ceiling: float = 0.0
 
 # PERFORMANCE: Cached camera vectors (updated once per frame)
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
@@ -534,9 +568,27 @@ func _ready() -> void:
 		ground_traction_high_speed = maxf(ground_acceleration * 0.5, 1.0)
 	if is_equal_approx(air_steer_force, 16.0):
 		air_steer_force = maxf(air_acceleration * 0.8, 1.0)
+	# Legacy migration: map old cap fields to the new universal cap model when present.
+	if not is_equal_approx(movement_cruise_speed_scale, 1.0):
+		walk_run_speed_ratio = movement_cruise_speed_scale
+	if movement_hard_speed_cap_scale > 0.0:
+		burst_speed_ratio = movement_hard_speed_cap_scale
+	if not is_equal_approx(ground_soft_speed_limit_force, 16.0):
+		core_soft_cap_force = ground_soft_speed_limit_force
+	
+	walk_run_speed_ratio = clampf(walk_run_speed_ratio, 0.05, 1.0)
+	burst_speed_ratio = clampf(maxf(burst_speed_ratio, walk_run_speed_ratio), walk_run_speed_ratio, 1.5)
+	core_soft_cap_force = maxf(core_soft_cap_force, 0.0)
+	cap_override_multiplier = maxf(cap_override_multiplier, 1.0)
+	if universal_speed_cap <= 0.0:
+		universal_speed_cap = maxf(max_speed_horizontal / maxf(walk_run_speed_ratio, 0.01), 1.0)
+	roll_attack_min_duration = clampf(roll_attack_min_duration, 0.1, 20.0)
+	roll_attack_max_duration = maxf(roll_attack_max_duration, roll_attack_min_duration)
+	_airborne_speed_ceiling = _get_effective_core_cap_for_state(State.AIRBORNE)
 	
 	# Initialize state
 	_change_state(State.IDLE)
+	_ensure_spin_roll_visual()
 	
 	# Hide reticle initially
 	if homing_reticle:
@@ -602,6 +654,7 @@ func _physics_process(delta: float) -> void:
 	
 	# Update homing reticle
 	_update_homing_reticle()
+	_update_spin_roll_visual()
 	
 	if _skip_move_and_slide:
 		_update_facing_from_velocity(delta)
@@ -653,8 +706,11 @@ func _gather_input() -> void:
 		jump_buffer_timer = jump_buffer_time
 
 	# Boost input
-	if Input.is_action_pressed("boost") and boost_meter > 0.0:
-		_start_boost()
+	if InputMap.has_action("boost"):
+		if Input.is_action_pressed("boost") and boost_meter > 0.0:
+			_start_boost()
+		elif is_boosting:
+			_stop_boost()
 	elif is_boosting:
 		_stop_boost()
 
@@ -681,6 +737,7 @@ func _update_grounded_status() -> void:
 		if floor_angle > max_slope_angle:
 			_force_detach_from_steep_floor()
 			return
+		_airborne_speed_ceiling = _get_effective_core_cap_for_state(State.AIRBORNE)
 		_last_floor_normal = floor_normal
 		_last_floor_tangent_velocity = velocity.slide(floor_normal)
 		coyote_timer = coyote_time
@@ -691,6 +748,9 @@ func _update_grounded_status() -> void:
 	else:
 		floor_normal = Vector3.UP
 		floor_angle = 0.0
+		if was_grounded:
+			var takeoff_speed := Vector3(velocity.x, 0.0, velocity.z).length()
+			_airborne_speed_ceiling = clampf(takeoff_speed, 0.0, _get_effective_core_cap_for_state(State.AIRBORNE))
 		
 		# Preserve tangent momentum only for ground-driven ramp exits (not jump launches)
 		if was_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
@@ -860,7 +920,12 @@ func _enter_state(state: State) -> void:
 		State.ROLLING:
 			roll_timer = 0.0
 		State.AIRBORNE:
-			pass
+			var current_horizontal_speed := Vector3(velocity.x, 0.0, velocity.z).length()
+			_airborne_speed_ceiling = clampf(
+				maxf(_airborne_speed_ceiling, current_horizontal_speed),
+				0.0,
+				_get_effective_core_cap_for_state(State.AIRBORNE)
+			)
 		State.SIDE_JUMP:
 			# Side jump goes perpendicular to skid direction, higher than normal jump
 			velocity.y = side_jump_velocity
@@ -1087,7 +1152,9 @@ func _process_rolling(delta: float) -> void:
 	
 	# Exit roll if holding forward direction (same direction as roll)
 	var tangent_velocity := _get_floor_tangent_velocity(velocity)
-	if tangent_velocity.length() > 0.1 and world_input_direction.length() > 0.1:
+	var min_attack_hold := roll_attack_min_duration if roll_is_attack else 0.0
+	var hold_window_active := roll_is_attack and roll_timer < min_attack_hold
+	if not hold_window_active and tangent_velocity.length() > 0.1 and world_input_direction.length() > 0.1:
 		var velocity_dir := tangent_velocity.normalized()
 		var input_dot = velocity_dir.dot(world_input_direction)
 		if input_dot > 0.7:  # Holding roughly forward
@@ -1096,12 +1163,14 @@ func _process_rolling(delta: float) -> void:
 	
 	# Auto-stop after time limit
 	var auto_stop_time := roll_auto_stop_time * (roll_attack_duration_multiplier if roll_is_attack else 1.0)
+	if roll_is_attack:
+		auto_stop_time = clampf(auto_stop_time, roll_attack_min_duration, roll_attack_max_duration)
 	if roll_timer >= auto_stop_time:
 		_change_state(State.IDLE if tangent_velocity.length() < roll_min_speed else State.MOVING)
 		return
 	
 	# Exit roll if too slow
-	if tangent_velocity.length() < roll_min_speed:
+	if not hold_window_active and tangent_velocity.length() < roll_min_speed:
 		_change_state(State.IDLE)
 		return
 	
@@ -1687,7 +1756,60 @@ func _update_facing_from_velocity(delta: float) -> void:
 	var horizontal := Vector3(velocity.x, 0, velocity.z)
 	if horizontal.length() < 0.1:
 		return
-	_rotate_player_model_to_direction(horizontal.normalized(), delta)
+	_rotate_player_model_to_direction(horizontal.normalized(), delta, movement_facing_rotation_speed)
+
+
+func _ensure_spin_roll_visual() -> void:
+	if not spin_roll_visual_enabled:
+		return
+	
+	var parent_node: Node3D = player_model if player_model else self
+	if not parent_node:
+		return
+	
+	if parent_node.has_node("SpinRollVisual"):
+		_spin_roll_visual = parent_node.get_node("SpinRollVisual") as MeshInstance3D
+	else:
+		_spin_roll_visual = MeshInstance3D.new()
+		_spin_roll_visual.name = "SpinRollVisual"
+		_spin_roll_visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var sphere := SphereMesh.new()
+		sphere.radius = 0.55
+		sphere.height = 1.1
+		_spin_roll_visual.mesh = sphere
+		parent_node.add_child(_spin_roll_visual)
+	
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = spin_roll_visual_tint
+	mat.emission_enabled = true
+	mat.emission = spin_roll_visual_tint
+	mat.emission_energy_multiplier = 0.25
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_spin_roll_visual.material_override = mat
+	_spin_roll_visual.position = Vector3(0.0, spin_roll_visual_y_offset, 0.0)
+	_spin_roll_visual.scale = Vector3.ONE * spin_roll_visual_scale
+	_spin_roll_visual.visible = false
+
+
+func _update_spin_roll_visual() -> void:
+	if not spin_roll_visual_enabled:
+		if _spin_roll_visual:
+			_spin_roll_visual.visible = false
+		return
+	
+	if not _spin_roll_visual:
+		_ensure_spin_roll_visual()
+		if not _spin_roll_visual:
+			return
+	
+	var active := current_state == State.SPIN_DASH_CHARGE or current_state == State.ROLLING
+	_spin_roll_visual.visible = active
+	if not active:
+		return
+	
+	_spin_roll_visual.position = Vector3(0.0, spin_roll_visual_y_offset, 0.0)
+	_spin_roll_visual.scale = Vector3.ONE * spin_roll_visual_scale
 
 
 func _get_facing_direction() -> Vector3:
@@ -1715,33 +1837,60 @@ func _apply_rolling_movement(delta: float) -> void:
 		roll_traction_multiplier,
 		roll_drag_multiplier * legacy_roll_drag_scale,
 		0.85,
-		1.4
+		1.0
 	)
 
 
 func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
 	var horizontal := Vector3(velocity.x, 0.0, velocity.z)
 	var has_input := world_input_direction.length() > 0.1
+	var walk_air_drive_cap: float = _get_effective_core_cap_for_state(State.IDLE)
+	var air_cap: float = _airborne_speed_ceiling if _airborne_speed_ceiling > 0.0 else _get_effective_core_cap_for_state(State.AIRBORNE)
+	air_cap = maxf(air_cap, walk_air_drive_cap)
 	
 	if has_input:
 		var desired_dir := world_input_direction.normalized()
-		horizontal += desired_dir * air_steer_force * control_multiplier * delta
-		if horizontal.length() > 0.1:
-			var current_dir := horizontal.normalized()
-			var turn_t := clampf(air_turn_rate * control_multiplier * delta, 0.0, 1.0)
-			var steered_dir := current_dir.slerp(desired_dir, turn_t).normalized()
-			horizontal = steered_dir * horizontal.length()
-		_rotate_player_model_to_direction(desired_dir, delta)
+		var speed: float = horizontal.length()
+		var drive_cap: float = walk_air_drive_cap if walk_air_drive_cap > 0.0 else air_cap
+		
+		if speed > 0.05:
+			var current_dir := horizontal / speed
+			var alignment := current_dir.dot(desired_dir)
+			
+			# Snappy arcade steering, with extra authority while reversing.
+			var turn_multiplier: float = 2.2 if alignment >= 0.0 else 3.0
+			var turn_t := clampf(air_turn_rate * turn_multiplier * control_multiplier * delta, 0.0, 1.0)
+			var steered_dir := current_dir.lerp(desired_dir, turn_t)
+			if steered_dir.length() <= 0.001:
+				steered_dir = desired_dir
+			steered_dir = steered_dir.normalized()
+			
+			# Opposite input: bleed speed first, then rebuild in the new direction.
+			if alignment < 0.0:
+				var reverse_brake := air_deceleration * (1.0 + -alignment * 2.0) * control_multiplier
+				speed = maxf(speed - reverse_brake * delta, 0.0)
+			elif drive_cap > 0.0:
+				speed = minf(speed + air_acceleration * control_multiplier * delta, drive_cap)
+			
+			# Prevent rare full horizontal cancellation while input is held.
+			if drive_cap > 0.0 and speed < 0.12:
+				var min_air_control_speed := maxf(air_acceleration * control_multiplier * delta * 0.75, 0.12)
+				speed = minf(min_air_control_speed, drive_cap)
+			
+			horizontal = steered_dir * speed
+		else:
+			var launch_speed := air_acceleration * control_multiplier * delta
+			if drive_cap > 0.0:
+				launch_speed = minf(launch_speed, drive_cap)
+			horizontal = desired_dir * maxf(launch_speed, 0.0)
+		
+		_rotate_player_model_to_direction(desired_dir, delta, movement_facing_rotation_speed)
 	
-	var drag := air_drag if has_input else (air_drag + air_deceleration)
+	var drag := air_drag if has_input else (air_drag + air_deceleration * 0.65)
 	horizontal = horizontal.move_toward(Vector3.ZERO, drag * delta)
 	
-	var max_air_speed := maxf(max_speed_horizontal, max_speed_depth) * maxf(air_speed_limit_multiplier, 0.1)
-	if has_speed_shoes:
-		max_air_speed *= speed_shoes_multiplier
-	if is_boosting:
-		max_air_speed = maxf(max_air_speed, boost_speed)
-	horizontal = _apply_soft_speed_limit(horizontal, max_air_speed, air_soft_speed_limit_force, delta)
+	if air_cap > 0.0:
+		horizontal = _apply_soft_speed_limit(horizontal, air_cap, core_soft_cap_force, delta)
 	
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
@@ -1779,6 +1928,15 @@ func _integrate_ground_momentum(
 	
 	var speed := tangent_velocity.length()
 	if desired_direction.length() > 0.001:
+		if speed > 0.1 and ground_direction_snap_rate > 0.0:
+			var snap_t := clampf(ground_direction_snap_rate * delta, 0.0, 1.0)
+			var current_dir := tangent_velocity / speed
+			var snapped_dir := current_dir.lerp(desired_direction, snap_t)
+			if snapped_dir.length() <= 0.001:
+				snapped_dir = desired_direction
+			snapped_dir = snapped_dir.normalized()
+			tangent_velocity = snapped_dir * speed
+		
 		var traction_force := _get_speed_tier_force(speed) * traction_multiplier
 		var heading_alignment := 1.0
 		if speed > 0.1:
@@ -1796,23 +1954,55 @@ func _integrate_ground_momentum(
 	if drag_force > 0.0:
 		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, drag_force * delta)
 	
-	var soft_limit := maxf(max_speed_horizontal, max_speed_depth) * speed_limit_multiplier
-	if has_speed_shoes:
-		soft_limit *= speed_shoes_multiplier
-	if is_boosting:
-		soft_limit = maxf(soft_limit, boost_speed)
-	tangent_velocity = _apply_soft_speed_limit(tangent_velocity, soft_limit, ground_soft_speed_limit_force, delta)
+	var soft_limit := _get_effective_core_cap_for_state(current_state) * speed_limit_multiplier
+	if soft_limit > 0.0:
+		tangent_velocity = _apply_soft_speed_limit(tangent_velocity, soft_limit, core_soft_cap_force, delta)
 	
 	_set_floor_tangent_velocity(tangent_velocity)
 	if desired_direction.length() > 0.001:
-		_rotate_player_model_to_direction(desired_direction, delta)
+		_rotate_player_model_to_direction(desired_direction, delta, movement_facing_rotation_speed)
 	elif tangent_velocity.length() > 0.1:
-		_rotate_player_model_to_direction(tangent_velocity.normalized(), delta)
+		_rotate_player_model_to_direction(tangent_velocity.normalized(), delta, movement_facing_rotation_speed)
 
 
 func _get_speed_tier_force(speed: float) -> float:
 	var t := clampf(speed / maxf(traction_tier_speed, 0.001), 0.0, 1.0)
 	return lerpf(ground_traction_low_speed, ground_traction_high_speed, t)
+
+
+func _get_core_cap_override_multiplier() -> float:
+	var mult := maxf(cap_override_multiplier, 1.0)
+	if has_speed_shoes:
+		mult = maxf(mult, speed_shoes_multiplier)
+	if is_boosting and universal_speed_cap > 0.0:
+		mult = maxf(mult, boost_speed / universal_speed_cap)
+	return mult
+
+
+func _get_walk_run_cap() -> float:
+	return maxf(universal_speed_cap * walk_run_speed_ratio, 0.0)
+
+
+func _get_burst_cap() -> float:
+	return maxf(universal_speed_cap * burst_speed_ratio, 0.0)
+
+
+func _get_base_core_cap_for_state(state: State) -> float:
+	if state in [
+		State.ROLLING,
+		State.SPIN_DASH_CHARGE,
+		State.AIRBORNE,
+		State.AIR_ROLLING,
+		State.SIDE_JUMP,
+		State.WALL_JUMP,
+		State.BUTT_BOUNCE_REBOUNDING
+	]:
+		return _get_burst_cap()
+	return _get_walk_run_cap()
+
+
+func _get_effective_core_cap_for_state(state: State) -> float:
+	return _get_base_core_cap_for_state(state) * _get_core_cap_override_multiplier()
 
 
 func _apply_soft_speed_limit(current_velocity: Vector3, max_speed: float, correction_force: float, delta: float) -> Vector3:
