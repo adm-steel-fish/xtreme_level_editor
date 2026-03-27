@@ -53,6 +53,13 @@ enum State {
 	AUTO_PATH,
 	HURT
 }
+
+enum ShieldType {
+	NONE = -1,
+	FLAME,     ## Fire immunity + fireball dash
+	ELECTRIC,  ## Electric immunity + magnet double jump + ring attract
+	AQUA       ## Underwater breathing + bounce
+}
 #endregion
 
 const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
@@ -323,6 +330,22 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var dropped_ring_scatter_speed: float = 8.5
 ## Upward speed used when rings burst out of the player.
 @export var dropped_ring_upward_speed: float = 7.0
+
+@export_group("Boost")
+## Maximum boost meter value.
+@export var boost_max: float = 100.0
+## Boost meter drain per second while boost is active.
+@export var boost_drain_rate: float = 10.0
+## Maximum speed while boosting (overrides normal max).
+@export var boost_speed: float = 40.0
+## Boost gained per ring collected.
+@export var boost_ring_gain: float = 2.0
+## Boost gained per enemy defeated.
+@export var boost_enemy_gain: float = 5.0
+## Boost gained per second while rail grinding.
+@export var boost_rail_gain: float = 1.0
+## Boost lost when taking damage.
+@export var boost_damage_loss: float = 25.0
 #endregion
 
 #region Exported Variables - References
@@ -412,6 +435,25 @@ var invincibility_timer: float = 0.0
 var is_invincible: bool = false
 var current_rings: int = 0
 
+# Score & Boost
+var current_score: int = 0
+var boost_meter: float = 0.0
+var is_boosting: bool = false
+
+# Shield / Power-up
+var active_shield: ShieldType = ShieldType.NONE
+var shield_timer: float = 0.0    # >0 for timed power-ups (speed shoes, invincibility)
+var has_speed_shoes: bool = false
+var speed_shoes_multiplier: float = 1.5
+var _electric_attract_range: float = 5.0
+
+# 2D Section Mode
+var is_2d_mode: bool = false
+## Which axis is locked: 0 = X-axis, 2 = Z-axis.
+var lock_axis: int = 2
+## The position on the locked axis.
+var lock_position: float = 0.0
+
 # Input
 var input_direction: Vector2 = Vector2.ZERO
 var world_input_direction: Vector3 = Vector3.ZERO
@@ -468,6 +510,12 @@ signal hurt(damage_source: Node3D)
 signal rings_lost(amount: int)
 signal rings_changed(current: int)
 signal player_died(cause: StringName)
+signal score_changed(current: int)
+signal boost_changed(current: float)
+signal boost_started()
+signal boost_ended()
+signal shield_changed(shield_type: ShieldType)
+signal shield_lost()
 #endregion
 
 
@@ -499,11 +547,14 @@ func _physics_process(delta: float) -> void:
 	_skip_move_and_slide = false
 	_update_cached_camera_vectors()
 	_gather_input()
+	_apply_2d_input_lock()
 	_update_grounded_status()
 	_update_timers(delta)
 	_update_floor_snap_state()
 	_update_invincibility(delta)
-	
+	_process_boost(delta)
+	_process_shield(delta)
+
 	# Process current state
 	match current_state:
 		State.IDLE:
@@ -558,7 +609,8 @@ func _physics_process(delta: float) -> void:
 	
 	# Apply movement
 	move_and_slide()
-	
+	_apply_2d_lock()
+
 	# Keep model facing actual movement direction (unless path-controlled)
 	_update_facing_from_velocity(delta)
 
@@ -599,6 +651,12 @@ func _gather_input() -> void:
 	# Jump buffer
 	if jump_just_pressed:
 		jump_buffer_timer = jump_buffer_time
+
+	# Boost input
+	if Input.is_action_pressed("boost") and boost_meter > 0.0:
+		_start_boost()
+	elif is_boosting:
+		_stop_boost()
 
 
 func _get_world_input_direction(input: Vector2) -> Vector3:
@@ -1357,6 +1415,9 @@ func _process_rail_grinding(delta: float) -> void:
 			rail_current_speed += accel_sign * rail_speed_boost_increment
 			rail_boost.emit()
 	
+	# Boost meter gain while grinding
+	add_boost(boost_rail_gain * delta)
+
 	# Optional resistance; keep disabled by default so flat rails preserve momentum.
 	if rail_speed_decay > 0.0:
 		var drag_rate := rail_speed_decay * (rail_crouch_drag_multiplier if crouching else 1.0)
@@ -1676,6 +1737,10 @@ func _apply_air_movement(delta: float, control_multiplier: float = 1.0) -> void:
 	horizontal = horizontal.move_toward(Vector3.ZERO, drag * delta)
 	
 	var max_air_speed := maxf(max_speed_horizontal, max_speed_depth) * maxf(air_speed_limit_multiplier, 0.1)
+	if has_speed_shoes:
+		max_air_speed *= speed_shoes_multiplier
+	if is_boosting:
+		max_air_speed = maxf(max_air_speed, boost_speed)
 	horizontal = _apply_soft_speed_limit(horizontal, max_air_speed, air_soft_speed_limit_force, delta)
 	
 	velocity.x = horizontal.x
@@ -1732,6 +1797,10 @@ func _integrate_ground_momentum(
 		tangent_velocity = tangent_velocity.move_toward(Vector3.ZERO, drag_force * delta)
 	
 	var soft_limit := maxf(max_speed_horizontal, max_speed_depth) * speed_limit_multiplier
+	if has_speed_shoes:
+		soft_limit *= speed_shoes_multiplier
+	if is_boosting:
+		soft_limit = maxf(soft_limit, boost_speed)
 	tangent_velocity = _apply_soft_speed_limit(tangent_velocity, soft_limit, ground_soft_speed_limit_force, delta)
 	
 	_set_floor_tangent_velocity(tangent_velocity)
@@ -2827,6 +2896,8 @@ func add_rings(count: int) -> void:
 	if count <= 0:
 		return
 	set_rings(current_rings + count)
+	add_boost(boost_ring_gain * count)
+	add_score(10 * count)
 
 
 func set_rings(count: int) -> void:
@@ -2882,6 +2953,13 @@ func take_damage(damage_source: Node3D = null, _ring_loss: int = 10) -> void:
 		kill(&"instant_death")
 		return
 
+	# Shield absorbs one hit
+	if active_shield != ShieldType.NONE:
+		_break_shield()
+		is_invincible = true
+		invincibility_timer = invincibility_duration * 0.5
+		return
+
 	if current_rings <= 0:
 		kill(&"hazard")
 		return
@@ -2889,6 +2967,8 @@ func take_damage(damage_source: Node3D = null, _ring_loss: int = 10) -> void:
 	# Enter hurt state with ring burst.
 	hurt.emit(damage_source)
 	_report_damage_to_game_manager(1)
+	_stop_boost()
+	add_boost(-boost_damage_loss)
 
 	var previous_rings := current_rings
 	var burst_count := mini(previous_rings, maxi(dropped_ring_cap, 0))
@@ -2919,6 +2999,158 @@ func on_enemy_bounce_hit(enemy: Node3D) -> void:
 	velocity.y = butt_bounce_powered_rebound_velocity
 	is_at_bounce_apex = false
 	_change_state(State.BUTT_BOUNCE_REBOUNDING)
+
+
+## Add to the player's score and emit signal.
+func add_score(points: int) -> void:
+	if points <= 0:
+		return
+	current_score += points
+	score_changed.emit(current_score)
+
+
+## Modify the boost meter by the given amount (positive to fill, negative to drain).
+func add_boost(amount: float) -> void:
+	var previous := boost_meter
+	boost_meter = clampf(boost_meter + amount, 0.0, boost_max)
+	if boost_meter != previous:
+		boost_changed.emit(boost_meter)
+
+
+## Start boosting (called by input handling).
+func _start_boost() -> void:
+	if is_boosting or boost_meter <= 0.0:
+		return
+	is_boosting = true
+	boost_started.emit()
+
+
+## Stop boosting.
+func _stop_boost() -> void:
+	if not is_boosting:
+		return
+	is_boosting = false
+	boost_ended.emit()
+
+
+## Process boost drain each frame. Call from _physics_process.
+func _process_boost(delta: float) -> void:
+	if not is_boosting:
+		return
+	add_boost(-boost_drain_rate * delta)
+	if boost_meter <= 0.0:
+		_stop_boost()
+#endregion
+
+
+#region Shield & Power-Up System
+## Apply a shield to the player.  Replaces any existing shield.
+func apply_shield(type: ShieldType) -> void:
+	active_shield = type
+	shield_changed.emit(active_shield)
+
+	# Flame and Electric shields are lost in water
+	# (Aqua shield is NOT lost in water — that's the whole point)
+
+
+## Remove the current shield (called on damage absorption).
+func _break_shield() -> void:
+	if active_shield == ShieldType.NONE:
+		return
+	active_shield = ShieldType.NONE
+	shield_lost.emit()
+	shield_changed.emit(ShieldType.NONE)
+
+
+## Apply speed shoes (timed speed multiplier).
+func apply_speed_shoes(duration: float) -> void:
+	has_speed_shoes = true
+	shield_timer = duration
+
+
+## Apply invincibility power-up (timed).
+func apply_invincibility_powerup(duration: float) -> void:
+	is_invincible = true
+	invincibility_timer = duration
+	shield_timer = duration
+
+
+## Process shield timers and electric ring attraction.  Call from _physics_process.
+func _process_shield(delta: float) -> void:
+	# Timed power-up countdown
+	if shield_timer > 0.0:
+		shield_timer -= delta
+		if shield_timer <= 0.0:
+			shield_timer = 0.0
+			if has_speed_shoes:
+				has_speed_shoes = false
+			# Invincibility is handled by _update_invincibility already
+
+	# Electric shield ring attraction
+	if active_shield == ShieldType.ELECTRIC:
+		_attract_nearby_rings(delta)
+
+	# Flame and Electric shields break in water
+	if active_shield in [ShieldType.FLAME, ShieldType.ELECTRIC]:
+		if current_state in [State.SWIMMING_SURFACE, State.SWIMMING_SUBMERGED,
+							State.SWIMMING_SPIN_ATTACK, State.SWIMMING_DRILL_DASH]:
+			_break_shield()
+
+
+func _attract_nearby_rings(_delta: float) -> void:
+	var tree := get_tree()
+	if not tree:
+		return
+	for node in tree.get_nodes_in_group("currency"):
+		if not is_instance_valid(node) or not (node is Node3D):
+			continue
+		var ring := node as Node3D
+		var distance := global_position.distance_to(ring.global_position)
+		if distance < _electric_attract_range and distance > 0.1:
+			var pull_dir := (global_position - ring.global_position).normalized()
+			ring.global_position += pull_dir * 15.0 * _delta
+#endregion
+
+
+#region 2D Section Mode
+## Enter 2D mode.  Locks the player to a plane on the given axis.
+## axis: 0 = lock X position, 2 = lock Z position.
+## position: the value on the locked axis to constrain to.
+func enter_2d_mode(axis: int, pos: float) -> void:
+	is_2d_mode = true
+	lock_axis = axis
+	lock_position = pos
+	# Snap immediately
+	_apply_2d_lock()
+
+
+## Exit 2D mode and return to full 3D movement.
+func exit_2d_mode() -> void:
+	is_2d_mode = false
+
+
+## Constrain velocity and position to the 2D plane.  Called after move_and_slide.
+func _apply_2d_lock() -> void:
+	if not is_2d_mode:
+		return
+	if lock_axis == 0:
+		velocity.x = 0.0
+		global_position.x = lock_position
+	elif lock_axis == 2:
+		velocity.z = 0.0
+		global_position.z = lock_position
+
+
+## Constrain world input so the player can't move off the locked axis.
+func _apply_2d_input_lock() -> void:
+	if not is_2d_mode:
+		return
+	if lock_axis == 0:
+		world_input_direction.x = 0.0
+	elif lock_axis == 2:
+		world_input_direction.z = 0.0
+	if world_input_direction.length() > 0.001:
+		world_input_direction = world_input_direction.normalized()
 #endregion
 
 

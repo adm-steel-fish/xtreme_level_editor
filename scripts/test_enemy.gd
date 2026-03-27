@@ -6,6 +6,7 @@ class_name XtremeTestEnemy
 
 @export var health: int = 1
 @export var bounce_velocity: float = 15.0
+@export var point_value: int = 100
 @export var use_retro_shader: bool = true  ## Use PS1/Saturn style retro shader
 
 var _is_destroyed: bool = false
@@ -144,8 +145,23 @@ func _flash() -> void:
 
 func destroy() -> void:
 	_is_destroyed = true
-	
+
+	# Report score and boost to the player that defeated us
+	_reward_player()
+
 	# Simple destroy effect - scale down and remove
 	var tween = create_tween()
 	tween.tween_property(self, "scale", Vector3.ONE * 0.001, 0.2)
 	tween.tween_callback(queue_free)
+
+
+func _reward_player() -> void:
+	var tree := get_tree()
+	if not tree:
+		return
+	for node in tree.get_nodes_in_group("player"):
+		if node is PlayerController:
+			var player := node as PlayerController
+			player.add_score(point_value)
+			player.add_boost(player.boost_enemy_gain)
+			return

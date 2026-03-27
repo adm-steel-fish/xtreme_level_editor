@@ -20,6 +20,11 @@ extends Resource
 @export var zone_act: int = 1
 @export_multiline var description: String = ""
 
+## ===== AUDIO =====
+@export_group("Audio")
+@export var zone_music: AudioStream
+@export var zone_music_volume_db: float = 0.0
+
 ## ===== RETRO SHADER SETTINGS =====
 @export_group("Retro Effects")
 @export var retro_enabled: bool = true
@@ -80,6 +85,7 @@ func apply_to_scene(scene_root: Node) -> void:
 	_apply_retro_settings()
 	_apply_environment(scene_root)
 	_apply_post_process(scene_root)
+	_apply_zone_music(scene_root)
 
 
 ## Apply retro shader settings via the global singleton
@@ -272,5 +278,19 @@ static func create_night_preset() -> ZoneVisualSettings:
 	settings.fog_end_distance = 130.0
 	
 	settings.brightness = 0.9
-	
+
 	return settings
+
+
+## Play the zone's music track via XtremeAudioManager if available.
+func _apply_zone_music(scene_root: Node) -> void:
+	if not zone_music:
+		return
+	if not scene_root:
+		return
+	var tree := scene_root.get_tree()
+	if not tree:
+		return
+	var audio_mgr := tree.get_first_node_in_group("audio_manager")
+	if audio_mgr and audio_mgr.has_method("play_music"):
+		audio_mgr.play_music(zone_music)
