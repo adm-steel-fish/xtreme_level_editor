@@ -87,6 +87,14 @@ const DROPPED_RING_SCRIPT := preload("res://scripts/dropped_ring.gd")
 @export var slope_acceleration_factor: float = 15.0
 ## Slope deceleration factor (how much uphill slows you down)
 @export var slope_deceleration_factor: float = 20.0
+## Minimum floor angle (degrees) before downhill release logic can trigger.
+@export var downhill_release_min_angle: float = 16.0
+## Minimum tangent speed before downhill release can trigger.
+@export var downhill_release_min_speed: float = 6.0
+## Upward impulse applied when releasing from a downhill slope.
+@export var downhill_release_bump_impulse: float = 2.0
+## How long floor snap is disabled after a downhill release.
+@export var downhill_release_snap_disable_time: float = 0.08
 ## Floor snap length while grounded (smaller values reduce ramp sticking)
 @export var floor_snap_length_ground: float = 0.05
 ## Time to disable floor snapping right after leaving a ramp (seconds)
@@ -387,6 +395,7 @@ var floor_angle: float = 0.0
 var _last_floor_normal: Vector3 = Vector3.UP
 var _last_floor_tangent_velocity: Vector3 = Vector3.ZERO
 var _ramp_detach_timer: float = 0.0
+var _downhill_release_active: bool = false
 
 # PERFORMANCE: Cached camera vectors (updated once per frame)
 var _cached_camera_forward: Vector3 = Vector3.FORWARD
@@ -580,6 +589,7 @@ func _update_grounded_status() -> void:
 	else:
 		floor_normal = Vector3.UP
 		floor_angle = 0.0
+		_downhill_release_active = false
 		
 		# Preserve tangent momentum only for ground-driven ramp exits (not jump launches)
 		if was_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
@@ -615,6 +625,16 @@ func _update_floor_snap_state() -> void:
 	if _ramp_detach_timer > 0.0:
 		floor_snap_length = 0.0
 		return
+	
+	if _should_release_downhill():
+		floor_snap_length = 0.0
+		if not _downhill_release_active:
+			_downhill_release_active = true
+			_ramp_detach_timer = maxf(_ramp_detach_timer, downhill_release_snap_disable_time)
+			velocity += floor_normal * downhill_release_bump_impulse
+		return
+	
+	_downhill_release_active = false
 	
 	if is_grounded and current_state in [State.IDLE, State.MOVING, State.SKIDDING, State.SPIN_DASH_CHARGE, State.ROLLING]:
 		floor_snap_length = floor_snap_length_ground
@@ -1611,6 +1631,27 @@ func _get_slope_direction() -> Vector3:
 	var gravity_dir = Vector3.DOWN
 	var projected = gravity_dir - floor_normal * gravity_dir.dot(floor_normal)
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+func _should_release_downhill() -> bool:
+	if not is_grounded:
+		return false
+	if floor_angle < downhill_release_min_angle:
+		return false
+	if not current_state in [State.MOVING, State.ROLLING, State.SKIDDING]:
+		return false
+	
+	var slope_direction := _get_slope_direction()
+	if slope_direction.length() <= 0.001:
+		return false
+	
+	var tangent_velocity := _get_floor_tangent_velocity(velocity)
+	var tangent_speed := tangent_velocity.length()
+	if tangent_speed < downhill_release_min_speed:
+		return false
+	
+	var downhill_alignment := tangent_velocity.normalized().dot(slope_direction)
+	return downhill_alignment > 0.2
 
 
 func _apply_slope_acceleration_to_tangent(tangent_velocity: Vector3, delta: float, preferred_direction: Vector3 = Vector3.ZERO) -> Vector3:
