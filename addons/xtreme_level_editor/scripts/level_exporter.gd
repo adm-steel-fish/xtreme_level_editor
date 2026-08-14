@@ -216,12 +216,12 @@ func _export_legacy_single_mesh(root: Node3D) -> void:
 func _export_hybrid_chunked(root: Node3D) -> void:
 	var static_world := Node3D.new()
 	static_world.name = "StaticWorld"
-	static_world.add_to_group("xtreme_static_world")
+	static_world.add_to_group("xtreme_static_world", true)
 	root.add_child(static_world)
 
 	var interactive_world := Node3D.new()
 	interactive_world.name = "InteractiveWorld"
-	interactive_world.add_to_group("xtreme_interactive_world")
+	interactive_world.add_to_group("xtreme_interactive_world", true)
 	root.add_child(interactive_world)
 
 	# chunk_key -> {coord: Vector3i, batches: Dictionary, solid_positions: Array}
@@ -268,7 +268,7 @@ func _export_hybrid_chunked(root: Node3D) -> void:
 		var chunk_node := Node3D.new()
 		chunk_node.name = "StaticChunk_%d_%d_%d" % [chunk_coord.x, chunk_coord.y, chunk_coord.z]
 		chunk_node.set_meta("xtreme_chunk_coord", chunk_coord)
-		chunk_node.add_to_group("xtreme_static_chunk")
+		chunk_node.add_to_group("xtreme_static_chunk", true)
 		static_world.add_child(chunk_node)
 
 		var batches: Dictionary = chunk_data["batches"]
@@ -298,13 +298,13 @@ func _export_traversal_world(root: Node3D) -> void:
 	var cell_size := grid_settings.get_cell_size()
 	var traversal_world := Node3D.new()
 	traversal_world.name = "TraversalWorld"
-	traversal_world.add_to_group("xtreme_traversal_world")
+	traversal_world.add_to_group("xtreme_traversal_world", true)
 	root.add_child(traversal_world)
 
 	if has_rails:
 		var rails_root := Node3D.new()
 		rails_root.name = "GrindRails"
-		rails_root.add_to_group("rails")
+		rails_root.add_to_group("rails", true)
 		traversal_world.add_child(rails_root)
 		for i in range(grind_rails.size()):
 			var rail := grind_rails[i]
@@ -317,7 +317,7 @@ func _export_traversal_world(root: Node3D) -> void:
 	if has_coasters:
 		var coaster_root := Node3D.new()
 		coaster_root.name = "AutoSequences"
-		coaster_root.add_to_group("auto_sequence")
+		coaster_root.add_to_group("auto_sequence", true)
 		traversal_world.add_child(coaster_root)
 		for i in range(roller_coasters.size()):
 			var coaster := roller_coasters[i]
@@ -351,8 +351,8 @@ func _build_grind_rail_path(rail: XtremeGrindRail, index: int, cell_size: Vector
 	curve.closed = rail.is_loop
 	path.curve = curve
 
-	path.add_to_group("rails")
-	path.add_to_group("targetable")
+	path.add_to_group("rails", true)
+	path.add_to_group("targetable", true)
 	path.set_meta("xtreme_rail_id", rail.rail_id)
 	path.set_meta("xtreme_allow_jump_off", rail.allow_jump_off)
 	path.set_meta("xtreme_allow_crouch_boost", rail.allow_crouch_boost)
@@ -407,7 +407,7 @@ func _build_auto_sequence_path(coaster: XtremeRollerCoaster, index: int) -> Path
 		if _node_has_property(path, "coaster_track_width"):
 			path.set("coaster_track_width", maxf(coaster.track_width, 0.8))
 	else:
-		path.add_to_group("auto_sequence")
+		path.add_to_group("auto_sequence", true)
 
 	return path
 
@@ -485,9 +485,9 @@ func _create_light_dash_ring_node(trail: XtremeLightDashTrail, dedicated: bool, 
 
 
 func _configure_light_dash_ring_node(node: Node3D, dedicated: bool, dedicated_alpha: float) -> void:
-	node.add_to_group("currency")
+	node.add_to_group("currency", true)
 	if dedicated:
-		node.add_to_group("light_dash_dedicated")
+		node.add_to_group("light_dash_dedicated", true)
 
 	if _node_has_property(node, "collectible"):
 		node.set("collectible", true)
@@ -765,15 +765,15 @@ func _add_interactive_tile_instance(parent: Node3D, tile_pos: Vector3i, tile_def
 func _apply_export_groups(node: Node, tile_def: XtremeTileDefinition) -> void:
 	match tile_def.tile_type:
 		XtremeTileDefinition.TileType.ENEMY:
-			node.add_to_group("enemies")
-			node.add_to_group("targetable")
+			node.add_to_group("enemies", true)
+			node.add_to_group("targetable", true)
 		XtremeTileDefinition.TileType.COLLECTIBLE:
-			node.add_to_group("currency")
+			node.add_to_group("currency", true)
 		XtremeTileDefinition.TileType.RAIL:
-			node.add_to_group("rails")
-			node.add_to_group("targetable")
+			node.add_to_group("rails", true)
+			node.add_to_group("targetable", true)
 		XtremeTileDefinition.TileType.WATER:
-			node.add_to_group("water_zone")
+			node.add_to_group("water_zone", true)
 		_:
 			pass
 

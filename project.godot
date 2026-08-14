@@ -11,9 +11,13 @@ config_version=5
 [application]
 
 config/name="xtreme level editor"
-run/main_scene="uid://cldvt7hyn7ouo"
+run/main_scene="res://scenes/Level01.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
+
+[autoload]
+
+AudioManager="*res://scripts/audio/audio_manager.gd"
 
 [display]
 

@@ -503,7 +503,7 @@ func _count_collectible_rings() -> int:
 	for node in tree.get_nodes_in_group("currency"):
 		if not (node is Node):
 			continue
-		if node.is_in_group("light_dash_dedicated"):
+		if _is_light_dash_ring(node):
 			continue
 		if node.has_method("get") and node.get("collectible") == false:
 			continue
@@ -511,3 +511,15 @@ func _count_collectible_rings() -> int:
 			total += 1
 
 	return total
+
+
+## Light-dash trail rings are traversal aids, not level collectibles, so they
+## must not inflate the perfect-rings target.
+##
+## The group check alone is not enough: levels exported before the exporter
+## started marking groups as persistent lost every runtime group when the
+## scene was packed. Those rings still carry the metadata flag, so check both.
+func _is_light_dash_ring(node: Node) -> bool:
+	if node.is_in_group("light_dash_dedicated"):
+		return true
+	return bool(node.get_meta("xtreme_dedicated_ring", false))

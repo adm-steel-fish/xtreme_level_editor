@@ -1,0 +1,56 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/level_controller.gd" id="1_kchta"]
+[ext_resource type="PackedScene" path="res://scenes/PresentLevel.tscn" id="2_6l7v6"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/runtime/game_manager.gd" id="3_5wrfj"]
+[ext_resource type="Script" path="res://addons/xtreme_level_editor/runtime/interactive_tile.gd" id="4_6kq4m"]
+[ext_resource type="Script" path="res://scripts/hud/gameplay_hud.gd" id="5_c787t"]
+[ext_resource type="Script" path="res://scripts/hud/results_screen.gd" id="6_kjmhy"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_y23en"]
+size = Vector3(5, 6, 5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_h8xpb"]
+transparency = 1
+cull_mode = 2
+shading_mode = 0
+albedo_color = Color(1, 0.85, 0.1, 0.45)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_p3ma5"]
+top_radius = 1.6
+bottom_radius = 1.6
+height = 6.0
+
+[node name="Level01" type="Node3D"]
+script = ExtResource("1_kchta")
+
+[node name="PresentLevel" type="Node3D" parent="." instance=ExtResource("2_6l7v6")]
+metadata/xtreme_export_mode = 1
+metadata/xtreme_chunk_size = Vector3i(16, 8, 16)
+
+[node name="GameManager" type="Node" parent="."]
+script = ExtResource("3_5wrfj")
+
+[node name="Goal" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 9, 31)
+script = ExtResource("4_6kq4m")
+tile_id = &"level01_goal"
+tile_type = 7
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Goal"]
+shape = SubResource("BoxShape3D_y23en")
+
+[node name="Marker" type="MeshInstance3D" parent="Goal"]
+material_override = SubResource("StandardMaterial3D_h8xpb")
+mesh = SubResource("CylinderMesh_p3ma5")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("5_c787t")
+
+[node name="ResultsLayer" type="CanvasLayer" parent="."]
+layer = 20
+
+[node name="ResultsScreen" type="Control" parent="ResultsLayer"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("6_kjmhy")
