@@ -65,9 +65,12 @@ func _ensure_entry_trigger() -> void:
 	marker_mesh.radius = 0.35
 	marker_mesh.height = 0.7
 	marker.mesh = marker_mesh
-	var marker_material := StandardMaterial3D.new()
-	marker_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	marker_material.albedo_color = debug_color
+	var marker_material: Material = RetroMaterial.create_unlit(debug_color, 1.2)
+	if marker_material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = debug_color
+		marker_material = fallback
 	marker.material_override = marker_material
 
 
@@ -106,9 +109,12 @@ func _rebuild_auto_trail_line() -> void:
 	line_mesh.surface_end()
 
 	debug_mesh.mesh = line_mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = debug_color
+	var material: Material = RetroMaterial.create_unlit(debug_color, 1.2)
+	if material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = debug_color
+		material = fallback
 	debug_mesh.material_override = material
 
 
@@ -133,9 +139,12 @@ func _rebuild_coaster_track() -> void:
 		return
 
 	var steps := maxi(6, int(ceili(length / maxf(coaster_segment_length, 0.25))))
-	var material := StandardMaterial3D.new()
-	material.albedo_color = coaster_color
-	material.roughness = 0.75
+	var material: Material = RetroMaterial.create_standard(coaster_color)
+	if material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.albedo_color = coaster_color
+		fallback.roughness = 0.75
+		material = fallback
 
 	for i in range(steps):
 		var d0 := length * (float(i) / float(steps))

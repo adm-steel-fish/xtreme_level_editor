@@ -1779,13 +1779,20 @@ func _ensure_spin_roll_visual() -> void:
 		_spin_roll_visual.mesh = sphere
 		parent_node.add_child(_spin_roll_visual)
 	
-	var mat := StandardMaterial3D.new()
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = spin_roll_visual_tint
-	mat.emission_enabled = true
-	mat.emission = spin_roll_visual_tint
-	mat.emission_energy_multiplier = 0.25
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Curved-world retro shader, so the spin ball bends with the world like the
+	# player model does. A StandardMaterial3D here would stay stubbornly flat.
+	var mat: Material = RetroMaterial.create_unlit(spin_roll_visual_tint, 1.1)
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("fade_alpha", spin_roll_visual_tint.a)
+	else:
+		var fallback := StandardMaterial3D.new()
+		fallback.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fallback.albedo_color = spin_roll_visual_tint
+		fallback.emission_enabled = true
+		fallback.emission = spin_roll_visual_tint
+		fallback.emission_energy_multiplier = 0.25
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat = fallback
 	_spin_roll_visual.material_override = mat
 	_spin_roll_visual.position = Vector3(0.0, spin_roll_visual_y_offset, 0.0)
 	_spin_roll_visual.scale = Vector3.ONE * spin_roll_visual_scale
@@ -3400,8 +3407,11 @@ func _spawn_dropped_rings(count: int) -> void:
 
 		ring.set("initial_velocity", initial_velocity)
 		ring.set("value", 1)
-		ring.global_position = global_position + Vector3.UP * 0.8
+		# global_position only works once the node is in the tree — setting it
+		# first silently discarded the value and dropped every ring at the
+		# world origin instead of around the player.
 		parent_node.add_child(ring)
+		ring.global_position = global_position + Vector3.UP * 0.8
 
 
 func _is_instant_death_source(damage_source: Node3D) -> bool:

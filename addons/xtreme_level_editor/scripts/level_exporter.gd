@@ -469,15 +469,23 @@ func _create_light_dash_ring_node(trail: XtremeLightDashTrail, dedicated: bool, 
 	area.add_child(collision)
 
 	var mesh_instance := MeshInstance3D.new()
+	# Name it explicitly: XtremeTestCurrency looks up its mesh child, and an
+	# unnamed node would be auto-named "@MeshInstance3D@N" instead.
+	mesh_instance.name = "MeshInstance3D"
 	var mesh := TorusMesh.new()
 	mesh.inner_radius = 0.15
 	mesh.outer_radius = 0.4
 	mesh_instance.mesh = mesh
 	mesh_instance.rotation_degrees.x = 90.0
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1.0, 0.88, 0.12, 1.0)
-	material.metallic = 0.7
-	material.roughness = 0.25
+	# Rings must use a curved-world-aware shader or they float off the bent
+	# ground. RetroMaterial.create_ring() builds one on the retro unlit shader.
+	var material: Material = RetroMaterial.create_ring()
+	if material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.albedo_color = Color(1.0, 0.88, 0.12, 1.0)
+		fallback.metallic = 0.7
+		fallback.roughness = 0.25
+		material = fallback
 	mesh_instance.material_override = material
 	area.add_child(mesh_instance)
 

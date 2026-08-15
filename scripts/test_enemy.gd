@@ -28,29 +28,47 @@ func _ready() -> void:
 
 
 func _setup_material() -> void:
-	var mesh = get_node_or_null("MeshInstance3D")
-	if not mesh or not mesh is MeshInstance3D:
+	# Find by type, not by name: exporter-created meshes are auto-named
+	# "@MeshInstance3D@N", so a literal name lookup silently found nothing and
+	# left enemies on a flat, non-curving material.
+	var mesh: MeshInstance3D = null
+	for child in get_children():
+		if child is MeshInstance3D:
+			mesh = child as MeshInstance3D
+			break
+	if not mesh:
 		return
-	
-	var original_mat = mesh.get_surface_override_material(0)
+
+	# material_override outranks surface overrides, so check it first.
+	var original_mat: Material = mesh.material_override
+	if not original_mat:
+		original_mat = mesh.get_surface_override_material(0)
 	if not original_mat:
 		original_mat = mesh.mesh.surface_get_material(0) if mesh.mesh else null
-	
+
 	# Check if already using a shader material
 	if original_mat and original_mat is ShaderMaterial:
 		_material = original_mat.duplicate()
 		_is_shader_material = true
-		mesh.set_surface_override_material(0, _material)
+		_assign_material(mesh, _material)
 	elif use_retro_shader:
 		# Try to create a retro shader material
 		_material = _create_retro_enemy_material()
 		if _material:
 			_is_shader_material = true
-			mesh.set_surface_override_material(0, _material)
+			_assign_material(mesh, _material)
 		else:
 			_setup_standard_material(mesh, original_mat)
 	else:
 		_setup_standard_material(mesh, original_mat)
+
+
+## Write the material back to whichever slot actually renders.
+func _assign_material(mesh: MeshInstance3D, material: Material) -> void:
+	if mesh.material_override:
+		mesh.material_override = material
+	else:
+		mesh.set_surface_override_material(0, material)
 
 
 func _create_retro_enemy_material() -> ShaderMaterial:

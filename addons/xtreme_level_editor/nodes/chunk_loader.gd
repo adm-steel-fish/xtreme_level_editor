@@ -259,9 +259,13 @@ func _create_chunk_mesh(min_cell: Vector3i, max_cell: Vector3i, cell_size: Vecto
 	mesh_instance.mesh = mesh
 	mesh_instance.name = "ChunkMesh"
 	
-	# Apply basic material
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.6, 0.6, 0.6)
+	# Apply basic material. Must be curve-aware — streamed chunks are level
+	# geometry, so a flat material would tear away from the surrounding world.
+	var mat: Material = RetroMaterial.create_standard(Color(0.6, 0.6, 0.6))
+	if mat == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.albedo_color = Color(0.6, 0.6, 0.6)
+		mat = fallback
 	mesh_instance.material_override = mat
 	
 	return mesh_instance

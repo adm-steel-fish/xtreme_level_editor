@@ -17,6 +17,7 @@ render_mode depth_draw_always, cull_back, unshaded;
 // =============================================================================
 
 #include "retro_common.gdshaderinc"
+#include "res://addons/xtreme_level_editor/shaders/curved_world.gdshaderinc"
 
 // ===== RETRO EFFECT SETTINGS =====
 group_uniforms retro_effects;
@@ -94,6 +95,11 @@ void vertex() {
 	
 	// ===== VERTEX COLOR PASSTHROUGH =====
 	v_color = COLOR;
+
+	// ===== CURVED WORLD =====
+	// Applied last, so rim/affine varyings above use the true (uncurved)
+	// position and only the final geometry is bent.
+	VERTEX = xtreme_curve_vertex(VERTEX, MODEL_MATRIX);
 }
 
 void fragment() {

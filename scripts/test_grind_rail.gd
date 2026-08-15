@@ -41,8 +41,13 @@ func _rebuild_debug_mesh() -> void:
 	line_mesh.surface_end()
 	
 	debug_mesh.mesh = line_mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = debug_color
-	material.no_depth_test = false
+	# Use the curved-world retro shader so the rail bends with the level it
+	# sits on; a StandardMaterial3D would render dead straight through it.
+	var material: Material = RetroMaterial.create_unlit(debug_color, 1.2)
+	if material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = debug_color
+		fallback.no_depth_test = false
+		material = fallback
 	debug_mesh.material_override = material

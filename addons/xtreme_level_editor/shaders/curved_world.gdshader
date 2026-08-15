@@ -1,9 +1,9 @@
 shader_type spatial;
-render_mode depth_draw_always, cull_back, diffuse_lambert, specular_schlick_ggx;
+render_mode depth_draw_always, cull_back, diffuse_lambert, specular_schlick_ggx, world_vertex_coords;
 
 // =============================================================================
 // XTREME CURVED WORLD SHADER
-// Combined: Curved World + Distance Wireframe + Ordered Dithering Dissolve
+// Level geometry: Curved World + Distance Wireframe + Ordered Dithering Dissolve
 // =============================================================================
 // Visual Pipeline:
 //   Near (0-30%):     Full solid textured geometry
@@ -11,21 +11,17 @@ render_mode depth_draw_always, cull_back, diffuse_lambert, specular_schlick_ggx;
 //   Far (70-90%):     Heavy dithering + prominent wireframe only
 //   Very Far (90-100%): Wireframe fades out completely
 // =============================================================================
+// The curve itself now lives in curved_world.gdshaderinc and is driven by
+// global shader uniforms, so this shader bends by exactly the same amount as
+// rings, rails, enemies and the player. Do not re-declare curve uniforms here.
+//
+// `world_vertex_coords` makes VERTEX world-space in vertex(), which removes the
+// per-vertex inverse(MODEL_MATRIX) this shader used to pay for.
+// =============================================================================
 
-// ===== CURVATURE SETTINGS =====
-group_uniforms curvature;
-uniform vec3 curve_center = vec3(0.0, 0.0, 0.0);
-uniform float curve_horizontal : hint_range(0.0, 0.3, 0.001) = 0.15;
-uniform float curve_vertical : hint_range(0.0, 0.3, 0.001) = 0.08;
-// Deprecated: kept for backward compatibility with saved materials.
-// If set to non-zero while curve_horizontal/curve_vertical are at defaults, this overrides both.
-uniform float curve_intensity : hint_range(0.0, 0.1, 0.001) = 0.0;
-uniform int curve_mode : hint_range(0, 2, 1) = 0; // 0=spherical, 1=cylindrical X, 2=cylindrical Y
-uniform float curve_max_distance : hint_range(10.0, 1000.0) = 200.0;
-uniform float curve_falloff_exponent : hint_range(1.0, 4.0, 0.1) = 2.0;
-uniform bool curve_enabled = true;
+#include "res://addons/xtreme_level_editor/shaders/curved_world.gdshaderinc"
 
-// ===== DISTANCE EFFECT SETTINGS =====
+// ===== DISTANCE EFFECT SETTINGS (per-material: these are a look, not a lens) =====
 group_uniforms distance_effects;
 uniform bool distance_effects_enabled = true;
 uniform float effect_max_distance : hint_range(10.0, 500.0) = 150.0;
@@ -90,55 +86,19 @@ float screen_hash(vec2 p) {
 }
 
 void vertex() {
-	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// world_vertex_coords: VERTEX arrives in world space.
+	world_position = VERTEX;
 
-	// Calculate distance from curve center for effects
-	float dist_from_center = length(world_position.xz - curve_center.xz);
+	// Distance from the curve centre drives the wireframe/dissolve falloff.
+	float dist_from_center = length(world_position.xz - xtreme_curve_center.xz);
 	distance_ratio = clamp(dist_from_center / effect_max_distance, 0.0, 1.0);
 
-	// Apply curved world effect
-	if (curve_enabled) {
-		float offset_x = world_position.x - curve_center.x;
-		float offset_y = world_position.y - curve_center.y;
+	// Apply the shared curve.
+	VERTEX = xtreme_curve_world(VERTEX);
 
-		// Resolve curve values: use deprecated curve_intensity if set, otherwise new params
-		float h_curve = curve_horizontal;
-		float v_curve = curve_vertical;
-		if (curve_intensity > 0.0) {
-			h_curve = curve_intensity;
-			v_curve = curve_intensity;
-		}
-
-		// Compute displacement with configurable falloff exponent per axis
-		float displacement = 0.0;
-
-		if (curve_mode == 0) {
-			// Spherical: both horizontal and vertical curvature
-			float h_dist = pow(abs(offset_x), curve_falloff_exponent);
-			float v_dist = pow(abs(offset_y), curve_falloff_exponent);
-			displacement = -(h_curve * h_dist + v_curve * v_dist);
-		} else if (curve_mode == 1) {
-			// Cylindrical X: horizontal curvature only
-			float h_dist = pow(abs(offset_x), curve_falloff_exponent);
-			displacement = -h_curve * h_dist;
-		} else {
-			// Cylindrical Y: vertical curvature only
-			float v_dist = pow(abs(offset_y), curve_falloff_exponent);
-			displacement = -v_curve * v_dist;
-		}
-
-		// Exponential distance falloff from camera depth
-		float z_distance = abs(world_position.z - curve_center.z);
-		float distance_factor = pow(clamp(1.0 - z_distance / curve_max_distance, 0.0, 1.0), curve_falloff_exponent);
-		displacement *= distance_factor;
-
-		vec3 displaced_world = world_position;
-		displaced_world.z += displacement;
-
-		VERTEX = (inverse(MODEL_MATRIX) * vec4(displaced_world, 1.0)).xyz;
-	}
-
-	// Generate barycentric coordinates for wireframe
+	// Generate barycentric coordinates for wireframe.
+	// NOTE: relies on non-indexed geometry (SurfaceTool without index()).
+	// If the exporter ever starts indexing meshes, this silently breaks.
 	int vertex_id = VERTEX_ID % 3;
 	if (vertex_id == 0) {
 		barycentric = vec3(1.0, 0.0, 0.0);

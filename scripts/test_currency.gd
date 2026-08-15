@@ -33,26 +33,54 @@ func _ready() -> void:
 	_orient_ring()
 
 
+## Find this ring's mesh by type rather than by name.
+##
+## Rings placed by hand have a child literally named "MeshInstance3D", but the
+## level exporter adds an unnamed one, which Godot auto-names "@MeshInstance3D@N".
+## Looking up the literal name silently failed on every exported level, so rings
+## kept their flat StandardMaterial3D and never picked up the curved-world
+## retro shader.
+func _find_mesh_child() -> MeshInstance3D:
+	for child in get_children():
+		if child is MeshInstance3D:
+			return child as MeshInstance3D
+	return null
+
+
+## Write the per-instance material back to whichever slot actually renders.
+## Setting a surface override while material_override is still populated would
+## leave the old flat material on screen.
+func _assign_material(mesh: MeshInstance3D, material: Material) -> void:
+	if mesh.material_override:
+		mesh.material_override = material
+	else:
+		mesh.set_surface_override_material(0, material)
+
+
 func _create_unique_material() -> void:
-	var mesh = get_node_or_null("MeshInstance3D")
-	if not mesh or not mesh is MeshInstance3D:
+	var mesh := _find_mesh_child()
+	if not mesh:
 		return
-	
-	var original_mat = mesh.get_surface_override_material(0)
+
+	# material_override outranks surface overrides, so read it first — the
+	# level exporter assigns rings via material_override.
+	var original_mat: Material = mesh.material_override
+	if not original_mat:
+		original_mat = mesh.get_surface_override_material(0)
 	if not original_mat:
 		original_mat = mesh.mesh.surface_get_material(0) if mesh.mesh else null
-	
+
 	# Check if it's already a retro shader material
 	if original_mat and original_mat is ShaderMaterial:
 		_unique_material = original_mat.duplicate()
 		_is_shader_material = true
-		mesh.set_surface_override_material(0, _unique_material)
+		_assign_material(mesh, _unique_material)
 	elif use_retro_shader:
 		# Try to create a retro shader material
 		_unique_material = _create_retro_ring_material()
 		if _unique_material:
 			_is_shader_material = true
-			mesh.set_surface_override_material(0, _unique_material)
+			_assign_material(mesh, _unique_material)
 		else:
 			# Fallback to standard material
 			_create_standard_material(mesh, original_mat)
@@ -104,7 +132,7 @@ func _create_standard_material(mesh: MeshInstance3D, original_mat: Material) -> 
 		mat.emission_energy_multiplier = 0.2
 		_unique_material = mat
 	_is_shader_material = false
-	mesh.set_surface_override_material(0, _unique_material)
+	_assign_material(mesh, _unique_material)
 
 
 func _orient_ring() -> void:
@@ -184,7 +212,8 @@ func _spawn_light_dash_residual() -> void:
 	residual.add_to_group("light_dash_dedicated")
 
 	var mesh_instance := MeshInstance3D.new()
-	var source_mesh := get_node_or_null("MeshInstance3D") as MeshInstance3D
+	mesh_instance.name = "MeshInstance3D"
+	var source_mesh := _find_mesh_child()
 	if source_mesh and source_mesh.mesh:
 		mesh_instance.mesh = source_mesh.mesh
 		mesh_instance.transform = source_mesh.transform
@@ -195,13 +224,22 @@ func _spawn_light_dash_residual() -> void:
 		mesh_instance.mesh = torus
 		mesh_instance.rotation_degrees.x = 90.0
 
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color(1.0, 0.88, 0.15, clampf(dash_residual_alpha, 0.02, 1.0))
-	mat.emission_enabled = true
-	mat.emission = Color(1.0, 0.88, 0.15)
-	mat.emission_energy_multiplier = 0.2
+	# Must be curve-aware: the residual sits exactly where the collected ring
+	# was, so a flat material makes it visibly drift off the bent ground.
+	var residual_alpha := clampf(dash_residual_alpha, 0.02, 1.0)
+	var mat: Material = RetroMaterial.create_unlit(
+		Color(1.0, 0.88, 0.15, residual_alpha), 1.0)
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("fade_alpha", residual_alpha)
+	else:
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fallback.albedo_color = Color(1.0, 0.88, 0.15, residual_alpha)
+		fallback.emission_enabled = true
+		fallback.emission = Color(1.0, 0.88, 0.15)
+		fallback.emission_energy_multiplier = 0.2
+		mat = fallback
 	mesh_instance.material_override = mat
 	residual.add_child(mesh_instance)
 

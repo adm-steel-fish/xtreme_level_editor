@@ -3,6 +3,10 @@ class_name XtremeDroppedRing
 
 @export var value: int = 1
 @export var lifetime: float = 3.0
+## Grace period before the ring can be picked back up. Rings burst out from the
+## player's own position, so without this the player re-absorbs every one of
+## them on the same frame and taking damage costs nothing.
+@export var collect_delay: float = 0.7
 @export var blink_start: float = 2.0
 @export var rotation_speed: float = 240.0
 @export var fall_gravity: float = 36.0
@@ -53,6 +57,8 @@ func _physics_process(delta: float) -> void:
 func _on_body_entered(body: Node) -> void:
 	if _collected:
 		return
+	if _age < collect_delay:
+		return
 	if not (body is PlayerController):
 		return
 
@@ -87,10 +93,15 @@ func _ensure_visuals() -> void:
 	_mesh_instance.mesh = torus
 	_mesh_instance.rotation_degrees.x = 90.0
 
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = Color(1.0, 0.85, 0.08, 1.0)
-	material.emission_enabled = true
-	material.emission = Color(1.0, 0.85, 0.08, 1.0)
-	material.emission_energy_multiplier = 0.35
+	# Curve-aware, so rings scattered on damage bend with the ground they
+	# bounce across instead of floating flat above it.
+	var material: Material = RetroMaterial.create_ring()
+	if material == null:
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = Color(1.0, 0.85, 0.08, 1.0)
+		fallback.emission_enabled = true
+		fallback.emission = Color(1.0, 0.85, 0.08, 1.0)
+		fallback.emission_energy_multiplier = 0.35
+		material = fallback
 	_mesh_instance.material_override = material

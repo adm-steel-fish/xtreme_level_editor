@@ -15,6 +15,7 @@ render_mode depth_draw_always, cull_back, diffuse_lambert, specular_disabled;
 // =============================================================================
 
 #include "retro_common.gdshaderinc"
+#include "res://addons/xtreme_level_editor/shaders/curved_world.gdshaderinc"
 
 // ===== RETRO EFFECT SETTINGS =====
 group_uniforms retro_effects;
@@ -126,6 +127,11 @@ void vertex() {
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float distance_from_camera = length(view_pos.xyz);
 	fog_factor = clamp((distance_from_camera - fog_start) / (fog_end - fog_start), 0.0, 1.0);
+
+	// ===== CURVED WORLD =====
+	// Applied last, so lighting/fog/UV varyings above are computed from the
+	// true (uncurved) position and only the final geometry is bent.
+	VERTEX = xtreme_curve_vertex(VERTEX, MODEL_MATRIX);
 }
 
 void fragment() {

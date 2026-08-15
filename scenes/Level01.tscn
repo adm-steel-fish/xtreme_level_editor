@@ -1,6 +1,8 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/level_controller.gd" id="1_kchta"]
+[ext_resource type="Script" path="res://scripts/game/curve_driver.gd" id="7_curve"]
+[ext_resource type="Shader" uid="uid://dirqha033fj0w" path="res://addons/xtreme_level_editor/shaders/retro/retro_unlit.gdshader" id="8_unlit"]
 [ext_resource type="PackedScene" path="res://scenes/PresentLevel.tscn" id="2_6l7v6"]
 [ext_resource type="Script" path="res://addons/xtreme_level_editor/runtime/game_manager.gd" id="3_5wrfj"]
 [ext_resource type="Script" path="res://addons/xtreme_level_editor/runtime/interactive_tile.gd" id="4_6kq4m"]
@@ -10,11 +12,18 @@
 [sub_resource type="BoxShape3D" id="BoxShape3D_y23en"]
 size = Vector3(5, 6, 5)
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_h8xpb"]
-transparency = 1
-cull_mode = 2
-shading_mode = 0
-albedo_color = Color(1, 0.85, 0.1, 0.45)
+[sub_resource type="ShaderMaterial" id="StandardMaterial3D_h8xpb"]
+shader = ExtResource("8_unlit")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/albedo = Color(1, 0.85, 0.1, 0.45)
+shader_parameter/brightness = 1.6
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/fade_alpha = 0.45
+shader_parameter/pulse_enabled = true
+shader_parameter/pulse_speed = 2.0
+shader_parameter/pulse_intensity = 0.2
 
 [sub_resource type="CylinderMesh" id="CylinderMesh_p3ma5"]
 top_radius = 1.6
@@ -30,6 +39,9 @@ metadata/xtreme_chunk_size = Vector3i(16, 8, 16)
 
 [node name="GameManager" type="Node" parent="."]
 script = ExtResource("3_5wrfj")
+
+[node name="CurveDriver" type="Node" parent="."]
+script = ExtResource("7_curve")
 
 [node name="Goal" type="Area3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 9, 31)

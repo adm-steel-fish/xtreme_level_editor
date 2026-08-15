@@ -70,3 +70,34 @@ action={
 
 common/physics_ticks_per_second=120
 3d/default_gravity=40.0
+
+[shader_globals]
+
+xtreme_curve_enabled={
+"type": "bool",
+"value": true
+}
+xtreme_curve_mode={
+"type": "int",
+"value": 0
+}
+xtreme_curve_center={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+xtreme_curve_horizontal={
+"type": "float",
+"value": 0.15
+}
+xtreme_curve_vertical={
+"type": "float",
+"value": 0.08
+}
+xtreme_curve_max_distance={
+"type": "float",
+"value": 200.0
+}
+xtreme_curve_falloff_exponent={
+"type": "float",
+"value": 2.0
+}

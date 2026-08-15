@@ -7,7 +7,7 @@
 
 ## 1.1 High Concept
 
-**Gina the Gecko** is a 3D platformer featuring momentum-based gameplay inspired by classic Sonic the Hedgehog titles, combined with multiple alternative gameplay modes including surfing, snowboarding, and on-rails flying sequences. The game features a distinctive PS1/Saturn-era visual aesthetic combined with Sonic Xtreme's signature fisheye lens curved world effect, creating a surrealistic, geometric, computer-themed world.
+**Gina the Gecko** is a 3D platformer featuring momentum-based gameplay inspired by classic Sonic the Hedgehog titles, combined with on-rails flying sequences between zones. The game features a distinctive PS1/Saturn-era visual aesthetic combined with Sonic Xtreme's signature fisheye lens curved world effect, creating a surrealistic, geometric, computer-themed world.
 
 ## 1.2 Genre Classification
 
@@ -39,8 +39,6 @@
 ### Alternative Gameplay References
 | Reference | Elements Borrowed |
 |-----------|-------------------|
-| Surf's Up (2007, Xbox 360) | Complete surfing gameplay system |
-| 1080° Snowboarding (N64) | Snowboarding physics and trick system |
 | Star Fox 64 | On-rails flying, all-range mode |
 | Space Harrier | Shooting mechanics inspiration |
 
@@ -91,8 +89,6 @@ The game features multiple distinct gameplay styles to prevent monotony:
 - 3D Platforming (Primary)
 - 2D Side-scrolling Sections
 - Boss Encounters
-- Surfing Levels
-- Snowboarding Levels
 - Flying Levels
 - Bonus Stages (Pool, Pinball)
 - Special Stages
@@ -323,8 +319,6 @@ Game
 │       └── ScreenEffectsManager
 │
 ├── Modes/
-│   ├── Surfing/
-│   ├── Snowboarding/
 │   ├── Flying/
 │   ├── BonusStages/
 │   └── VillageBuilder/
@@ -409,8 +403,6 @@ ZONE_DATA:
     mid_bosses: array[boss_id]
     final_boss: boss_id
     
-  surfing_levels: array[level_id]
-  snowboarding_levels: array[level_id]
   
   unlock_requirements:
     prerequisite_zones: array[zone_id]
@@ -424,7 +416,7 @@ LEVEL_DATA:
   
   level_id: string
   level_name: string
-  level_type: enum[STANDARD, BOSS, SURFING, SNOWBOARDING, FLYING, SPECIAL]
+  level_type: enum[STANDARD, BOSS, FLYING, SPECIAL]
   
   geometry:
     visual_mesh: resource_path
@@ -481,44 +473,6 @@ CONTROL_SCHEME_PLATFORMING:
     
   camera:
     right_stick: camera_adjust (limited)
-    
----
-
-CONTROL_SCHEME_SURFING:
-  
-  movement:
-    left_stick / WASD: board_direction
-    
-  actions:
-    button_south / SPACE: jump / launch
-    button_west / SHIFT: shuvit_left
-    button_east / E: shuvit_right
-    button_north / Q: grab (trick modifier)
-    
-  tricks:
-    d_pad / arrow_keys + button: trick_combos
-    
-  boost:
-    right_trigger / MOUSE1: turbo (when stoke meter filled)
-    
----
-
-CONTROL_SCHEME_SNOWBOARDING:
-  
-  movement:
-    left_stick / WASD: board_direction
-    
-  actions:
-    button_south / SPACE: jump / ollie
-    button_west / SHIFT: brake_left
-    button_east / E: brake_right
-    button_north / Q: grab (trick modifier)
-    
-  tricks:
-    left_stick + buttons: trick_combos
-    
-  combat:
-    right_trigger / MOUSE1: ram_attack
     
 ---
 
@@ -600,7 +554,7 @@ WORLD_BACKGROUND:
   
   When the Syndicate attacks TROPICA VILLAGE, home of Gina the Gecko, 
   most of her tribe is captured and imprisoned across the GRID. Gina, 
-  who was away surfing when the attack occurred, returns to find her 
+  who was away travelling when the attack occurred, returns to find her 
   home destroyed and her people gone.
   
   Now Gina must journey across the zones of GECKO GRID, rescue her 
@@ -648,11 +602,9 @@ CHARACTER_PROFILE:
       
   abilities_lore:
     innate:
-      - Natural surfer (tribal tradition)
       - Wall climbing (gecko pads)
       - High agility and speed
     learned:
-      - Snowboarding (learned from observation)
       - Jet piloting (stolen Syndicate tech)
       - Combat techniques (necessity)
       
@@ -831,13 +783,10 @@ SUPPORTING_CAST:
     rescued: Zone 1
     
   MARINA:
-    role: Gina's surfing mentor
-    provides: Surfing level tutorials
     rescued: Zone 4
     
   FROST:
     role: Northern tribe visitor
-    provides: Snowboarding tutorials
     rescued: Zone 7
     
   Additional tribe members rescued throughout zones
@@ -887,8 +836,6 @@ PHASE_1_CORE:
   
 PHASE_2_VARIETY:
   - 2D section system
-  - Surfing gameplay
-  - Snowboarding gameplay
   - Flying gameplay
   
 PHASE_3_EXPANSION:
@@ -2851,668 +2798,9 @@ FORTRESS_LEVEL_STRUCTURE:
 
 **END OF PART 3**
 
-*Next: Part 4 - Alternative Gameplay Modes (Surfing, Snowboarding, Flying)*
+*Next: Part 4 - Alternative Gameplay Modes (Flying)*
 # GINA THE GECKO - GAME DESIGN DOCUMENT
-## Part 4: Alternative Gameplay Modes (Surfing, Snowboarding, Flying)
-
----
-
-# 17. SURFING LEVELS
-
-## 17.1 Surfing Overview
-
-Surfing levels are score-attack gameplay sequences directly inspired by **Surf's Up (2007, Xbox 360)**. These levels provide a complete departure from platforming while maintaining the game's ring and scoring systems.
-
-```
-SURFING_PHILOSOPHY:
-  
-  reference_game: "Surf's Up (2007) - Xbox 360 version"
-  gameplay_type: Score-attack racing/tricks
-  perspective: Third-person behind surfer
-  
-  integration:
-    - 1-2 surfing levels per zone
-    - Story context: Gina's tribal surfing skills
-    - Shares ring system with main game
-    - Contributes to overall score/XP
-```
-
-## 17.2 Surfing Controls
-
-```
-SURFING_CONTROLS:
-
-  MOVEMENT:
-    left_stick / WASD:
-      - Left/Right: Steer board
-      - Up: Speed up / Climb wave
-      - Down: Slow down / Drop on wave
-      
-  PRIMARY_ACTIONS:
-    button_south / SPACE: 
-      - On water: Jump/Launch off wave
-      - On ramp: Launch into air
-      - In air: N/A (use trick buttons)
-      
-    button_west / SHIFT:
-      - Shuvit Left (quick dodge left)
-      
-    button_east / E:
-      - Shuvit Right (quick dodge right)
-      
-    button_north / Q:
-      - Grab modifier (hold during tricks)
-      
-  TRICK_INPUTS:
-    d_pad / arrow_keys + face_button:
-      - Directional input determines trick type
-      - Button determines trick variation
-      - Grab modifier adds grab variant
-      
-  BOOST:
-    right_trigger / MOUSE1:
-      - Activate turbo (when Stoke Meter filled)
-      
-  COMBAT:
-    ram_attack:
-      - Steer into rival surfers
-      - Knocks them off board
-```
-
-## 17.3 Surfing Mechanics
-
-### 17.3.1 Wave System
-
-```
-WAVE_MECHANICS:
-
-  WAVE_TYPES:
-  
-    SWELL_WAVE:
-      description: Standard rolling wave
-      height: Low to medium
-      use: Basic speed, ramp launching
-      
-    BARREL_WAVE:
-      description: Curling wave with tube
-      height: Medium to high
-      use: Ride inside for bonus, tricks
-      barrel_bonus: Score multiplier while inside
-      
-    MEGA_WAVE:
-      description: Large set-piece wave
-      height: Very high
-      use: Major trick opportunity
-      timing: Specific level moments
-      
-  WAVE_BEHAVIOR:
-    movement: Waves travel toward shore
-    player_interaction: Ride face, launch from lip
-    barrel_duration: ~5-10 seconds typical
-    
-  WAVE_RIDING:
-    face_riding: Standard surfing position
-    lip_launch: Launch from wave top
-    barrel_entry: Enter curling wave tube
-    barrel_exit: Exit before collapse
-```
-
-### 17.3.2 Trick System
-
-```
-TRICK_SYSTEM:
-
-  TRICK_CATEGORIES:
-  
-    SPIN_TRICKS:
-      input: Left/Right + Jump
-      examples: 180, 360, 540, 720
-      score: 100-500 based on rotation
-      
-    FLIP_TRICKS:
-      input: Up/Down + Jump
-      examples: Front flip, Back flip, Double flip
-      score: 150-600 based on complexity
-      
-    GRAB_TRICKS:
-      input: Direction + Grab button (hold)
-      examples: Indy, Melon, Stalefish, Method
-      score: 200-400 based on grab
-      hold_bonus: +50 per 0.5 seconds held
-      
-    COMBO_TRICKS:
-      input: Combine spin + flip + grab
-      examples: 360 Indy, Backflip Method
-      score: Combined + 50% combo bonus
-      
-  TRICK_EXECUTION:
-    air_time_requirement: Minimum 0.5 seconds
-    landing: Must land on board (not wipeout)
-    perfect_landing: +25% score bonus
-    sloppy_landing: -50% score, speed loss
-    
-  TRICK_CHAINS:
-    consecutive_tricks: Multiplier increases
-    multiplier_max: 5x
-    multiplier_decay: Resets on landing without trick
-```
-
-### 17.3.3 Stoke Meter (Boost)
-
-```
-STOKE_METER:
-
-  description: "Surf's Up style boost meter"
-  
-  METER:
-    max_value: 100%
-    display: Circular meter on HUD
-    
-  FILLING:
-    trick_completion: +5-20% based on trick score
-    barrel_riding: +2% per second
-    ring_collection: +1% per ring
-    near_miss: +3% (passing close to obstacle)
-    
-  DRAINING:
-    turbo_active: -15% per second
-    wipeout: -50% instant
-    
-  TURBO_MODE:
-    activation: Press boost when meter > 25%
-    effect: 
-      - 1.5x speed increase
-      - Invulnerable to obstacles
-      - Enhanced turn response
-    duration: Based on meter amount
-```
-
-### 17.3.4 Shuvit System
-
-```
-SHUVIT_MECHANICS:
-
-  description: "Quick dodge maneuver"
-  
-  EXECUTION:
-    input: Shuvit Left/Right button
-    animation: Quick board spin, lateral movement
-    distance: 2 units sideways
-    duration: 0.3 seconds
-    invincibility: Brief i-frames during animation
-    
-  USES:
-    - Dodge obstacles
-    - Avoid rival attacks
-    - Collect offset rings
-    - Style points
-    
-  COOLDOWN: 0.5 seconds between shuvits
-```
-
-## 17.4 Surfing Level Design
-
-### 17.4.1 Level Structure
-
-```
-SURFING_LEVEL_STRUCTURE:
-
-  DIRECTION: Linear (Point A to Point B)
-  LENGTH: 2-4 minutes typical
-  
-  SECTIONS:
-  
-    STARTING_ZONE:
-      duration: 30 seconds
-      purpose: Build speed, learn wave pattern
-      difficulty: Easy
-      
-    WAVE_ZONE_1:
-      duration: 45-60 seconds
-      features: Barrel opportunities, basic obstacles
-      objectives: Often placed here
-      
-    TRANSITION_ZONE:
-      duration: 30 seconds
-      features: Ramps, rail grinds
-      purpose: Connect wave sections
-      
-    WAVE_ZONE_2:
-      duration: 45-60 seconds
-      features: Larger waves, more rivals
-      difficulty: Medium
-      
-    FINALE_ZONE:
-      duration: 30-60 seconds
-      features: Mega wave set-piece
-      purpose: High-score opportunity
-      
-    FINISH:
-      trigger: Cross finish line
-      result: Score tally, objective check
-```
-
-### 17.4.2 Course Elements
-
-```
-COURSE_ELEMENTS:
-
-  RAMPS:
-    function: Launch into air for tricks
-    placement: Throughout course
-    types: Small (low air), Medium, Large (high air)
-    
-  RAILS:
-    function: Grind for points, navigate obstacles
-    input: Automatic when contacted
-    balance: None required (simplified from main game)
-    
-  RINGS:
-    function: Protection, score, stoke meter
-    placement: Guide optimal path
-    collection: Automatic on contact
-    
-  OBSTACLES:
-    rocks: Static hazards
-    debris: Moving hazards
-    whirlpools: Pulls player off course
-    
-  RIVAL_SURFERS:
-    behavior: Follow similar path, attack player
-    attacks: Ram into player, cut off path
-    defeat: Ram them to knock off board
-    respawn: After 5 seconds
-```
-
-## 17.5 Surfing Objectives
-
-```
-SURFING_OBJECTIVES:
-
-  OBJECTIVE_TYPES:
-  
-    SCORE_THRESHOLD:
-      description: "Reach X points"
-      example: "Score 50,000 points"
-      tracking: Running total on HUD
-      
-    COLLECTION:
-      description: "Collect specific items"
-      example: "Collect 5 Tribal Tokens"
-      items: Special collectibles on course
-      
-    GATE_CHALLENGE:
-      description: "Pass through gates"
-      example: "Pass through 10 speed gates"
-      gates: Marked checkpoints on course
-      
-    TRICK_CHALLENGE:
-      description: "Perform specific tricks"
-      example: "Land 3 different grab tricks"
-      tracking: Checklist on HUD
-      
-    RIVAL_DEFEAT:
-      description: "Knock rivals off boards"
-      example: "Defeat 3 rival surfers"
-      
-  COMPLETION:
-    requirement: Complete ALL objectives in single run
-    failure: Must restart level
-    reward: Level marked complete, unlocks progress
-```
-
-## 17.6 Surfing Ring System
-
-```
-SURFING_RINGS:
-
-  COLLECTION:
-    method: Pass through ring position
-    effect: +1 ring, +10 score, +1% stoke
-    
-  PROTECTION:
-    wipeout_with_rings: Lose rings, continue surfing
-    wipeout_without_rings: Respawn at checkpoint
-    
-  RING_LOSS:
-    on_wipeout: All rings lost (scattered, can't recollect)
-    on_rival_hit: 10 rings lost
-    
-  SPECIAL_RINGS:
-    super_ring: +10 rings
-    ring_trail: Line of rings showing path
-```
-
----
-
-# 18. SNOWBOARDING LEVELS
-
-## 18.1 Snowboarding Overview
-
-Snowboarding levels are downhill survival sequences inspired by **1080° Snowboarding (N64)**. The primary goal is reaching the bottom while avoiding hazards and enemies.
-
-```
-SNOWBOARDING_PHILOSOPHY:
-
-  reference_game: "1080° Snowboarding (N64)"
-  gameplay_type: Downhill survival with tricks
-  perspective: Third-person behind boarder
-  
-  integration:
-    - 1-2 snowboarding levels per applicable zone
-    - Story context: Gina learns from observation
-    - Ring system protects from crashes
-    - Tricks optional for score/XP
-```
-
-## 18.2 Snowboarding Controls
-
-```
-SNOWBOARDING_CONTROLS:
-
-  MOVEMENT:
-    left_stick / WASD:
-      - Left/Right: Steer board, carve turns
-      - Up: Tuck (increase speed)
-      - Down: Brake/Slow
-      
-  PRIMARY_ACTIONS:
-    button_south / SPACE:
-      - Ollie/Jump (launch off any surface)
-      
-    button_west / SHIFT:
-      - Hard carve left (sharp turn)
-      
-    button_east / E:
-      - Hard carve right (sharp turn)
-      
-    button_north / Q:
-      - Grab modifier (hold during air)
-      
-  TRICK_INPUTS:
-    air + direction + button:
-      - Similar to surfing trick system
-      - Spins, flips, grabs
-      
-  COMBAT:
-    right_trigger / MOUSE1:
-      - Ram attack (steer into enemies)
-    
-    button_south (in air near enemy):
-      - Aerial attack (stomp/hit)
-```
-
-## 18.3 Snowboarding Mechanics
-
-### 18.3.1 Speed Control
-
-```
-SPEED_MECHANICS:
-
-  BASE_SPEED:
-    determined_by: Slope angle
-    minimum: 5 units/sec (flat sections)
-    maximum: 35 units/sec (steep sections)
-    
-  SPEED_MODIFIERS:
-  
-    TUCKING:
-      input: Hold Up/Forward
-      effect: +20% speed, reduced turn ability
-      risk: Harder to avoid obstacles
-      
-    BRAKING:
-      input: Hold Down/Back
-      effect: -30% speed, better control
-      use: Sharp turns, hazard avoidance
-      
-    CARVING:
-      input: Hard turn buttons
-      effect: Maintain speed through turns
-      technique: Chain carves for flow
-      
-    OBSTACLES:
-      snow_drift: Minor slow
-      deep_snow: Major slow
-      ice_patch: Speed boost, less control
-```
-
-### 18.3.2 Terrain Types
-
-```
-TERRAIN_TYPES:
-
-  PACKED_SNOW:
-    description: Standard surface
-    speed: Normal
-    control: Normal
-    
-  POWDER:
-    description: Deep soft snow
-    speed: Reduced (-20%)
-    control: Reduced turning
-    
-  ICE:
-    description: Slippery frozen surface
-    speed: Increased (+15%)
-    control: Greatly reduced
-    
-  MOGULS:
-    description: Bumpy snow mounds
-    speed: Variable
-    effect: Launches player slightly
-    
-  JUMPS:
-    description: Intentional ramps
-    function: Major air for tricks
-    types: Small, Medium, Large, Mega
-```
-
-### 18.3.3 Trick System
-
-```
-SNOWBOARDING_TRICKS:
-
-  TRICK_CATEGORIES:
-    Same as surfing:
-    - Spin tricks (rotations)
-    - Flip tricks (vertical rotations)
-    - Grab tricks (board grabs)
-    - Combos (combinations)
-    
-  SCORING:
-    trick_base: 100-600 points
-    height_bonus: +10% per unit of air
-    rotation_bonus: +50 per 180 degrees
-    grab_hold_bonus: +50 per 0.5 seconds
-    
-  OPTIONAL_NATURE:
-    tricks_required: NO
-    tricks_benefit: Score, XP, style
-    survival_priority: Reaching bottom safely
-```
-
-### 18.3.4 Enemy Chase System
-
-```
-ENEMY_CHASE:
-
-  ENEMY_TYPES:
-  
-    SNOWBOARD_PURSUERS:
-      description: Enemy boarders chasing player
-      behavior: Follow player path, attempt rams
-      attack: Side collision damages player
-      defeat: Ram them or aerial attack
-      
-    SKI_ATTACKERS:
-      description: Faster enemies on skis
-      behavior: Overtake and cut off player
-      attack: Creates hazards in front
-      defeat: Harder to hit, must outmaneuver
-      
-    AERIAL_DRONES:
-      description: Flying enemies
-      behavior: Fly alongside, shoot at player
-      attack: Projectiles from above
-      defeat: Jump attack or avoid
-      
-  SPAWN_SYSTEM:
-    initial: 2-3 enemies at start
-    reinforcements: More spawn over time
-    maximum: 5 active enemies
-    
-  DAMAGE_SYSTEM:
-    enemy_hit: Lose 10 rings, brief stun
-    no_rings: Crash, respawn at checkpoint
-```
-
-## 18.4 Snowboarding Level Design
-
-### 18.4.1 Level Structure
-
-```
-SNOWBOARDING_LEVEL_STRUCTURE:
-
-  DIRECTION: Top of mountain to bottom
-  LENGTH: 3-5 minutes typical
-  BRANCHING: Multiple paths available
-  
-  SECTIONS:
-  
-    STARTING_ZONE:
-      slope: Gentle
-      purpose: Build speed, tutorial enemies
-      paths: 1-2
-      
-    UPPER_MOUNTAIN:
-      slope: Medium
-      features: Basic obstacles, jumps
-      paths: 2-3
-      branching: Paths split here
-      
-    MID_MOUNTAIN:
-      slope: Steep sections
-      features: Major jumps, rail grinds
-      paths: 2-3
-      enemies: Increased presence
-      
-    FOREST/CANYON_ZONE:
-      slope: Variable
-      features: Environmental hazards
-      paths: May converge/split
-      difficulty: Higher
-      
-    LOWER_MOUNTAIN:
-      slope: Steep
-      features: Final challenges
-      paths: Begin converging
-      
-    FINISH_ZONE:
-      slope: Leveling out
-      all_paths_converge: Yes
-      finish_line: Goal trigger
-```
-
-### 18.4.2 Path Design
-
-```
-PATH_SYSTEM:
-
-  PATH_PHILOSOPHY:
-    - Multiple viable routes
-    - Risk/reward balance
-    - Visual clarity for choices
-    
-  PATH_TYPES:
-  
-    MAIN_PATH:
-      difficulty: Medium
-      rings: Moderate amount
-      enemies: Standard
-      
-    CLIFF_PATH:
-      difficulty: Hard
-      rings: Many
-      enemies: Fewer (terrain is challenge)
-      risk: Fall damage, precision required
-      
-    FOREST_PATH:
-      difficulty: Medium
-      rings: Spread out
-      enemies: Ambush opportunities
-      features: Trees, tight turns
-      
-    CAVE_PATH:
-      difficulty: Variable
-      rings: Hidden bonuses
-      enemies: May be absent
-      risk: Dark, sudden turns
-      
-  PATH_MARKERS:
-    signs: Indicate path names
-    color_coding: Difficulty indication
-    preview: Brief glimpse of path ahead
-```
-
-### 18.4.3 Course Elements
-
-```
-COURSE_ELEMENTS:
-
-  JUMPS:
-    natural_ramps: Snow formations
-    constructed_ramps: Wooden ramps
-    cliff_drops: High risk, high reward
-    
-  RAILS:
-    function: Grind across gaps
-    types: Logs, metal rails, ice rails
-    score: Points while grinding
-    
-  OBSTACLES:
-    trees: Crash hazard
-    rocks: Crash hazard
-    crevasses: Fall hazard
-    avalanche_zones: Timed hazard
-    
-  HAZARDS:
-    ice_patches: Loss of control
-    wind_gusts: Push player sideways
-    enemy_attacks: Projectiles, rams
-    
-  RINGS:
-    placement: Mark safe paths
-    clusters: Reward exploration
-    dangerous_positions: Risk/reward choice
-```
-
-## 18.5 Snowboarding Completion
-
-```
-SNOWBOARDING_COMPLETION:
-
-  WIN_CONDITION:
-    requirement: Reach bottom of mountain
-    enemies: Do not need to defeat
-    time_limit: None (but enemies make delay risky)
-    
-  FAILURE_CONDITIONS:
-    crash_no_rings: Respawn at checkpoint
-    fall_into_pit: Respawn at checkpoint
-    
-  SCORING:
-    survival_bonus: Base 5000 points
-    ring_bonus: Rings × 10
-    trick_bonus: All tricks totaled
-    enemy_bonus: 500 per enemy defeated
-    time_bonus: Faster = more points
-    
-  CHECKPOINTS:
-    frequency: Every ~60 seconds of travel
-    function: Respawn point
-    ring_reset: Start with 0 rings
-```
+## Part 4: Alternative Gameplay Modes (Flying)
 
 ---
 
@@ -3913,17 +3201,6 @@ RING_SYSTEM_ACROSS_MODES:
       scatter: Yes (can recollect)
       death: Hit with 0 rings
       
-    SURFING:
-      lose_on_wipeout: All rings
-      scatter: No (lost permanently)
-      death: Wipeout with 0 rings
-      
-    SNOWBOARDING:
-      lose_on_hit: 10 rings per hit
-      lose_on_crash: All rings
-      scatter: No
-      death: Crash with 0 rings
-      
     FLYING:
       lose_on_hit: 10-30 based on attack
       scatter: No
@@ -3939,16 +3216,6 @@ POWER_UPS_BY_MODE:
     shields: All 5 types
     invincibility: Available
     speed_shoes: Available
-    
-  SURFING:
-    shields: Basic, Aqua only
-    invincibility: Available
-    speed_shoes: N/A (use Stoke Meter)
-    
-  SNOWBOARDING:
-    shields: Basic, Flame only
-    invincibility: Available
-    speed_shoes: N/A
     
   FLYING:
     shields: Basic only (ship shield)
@@ -4673,8 +3940,6 @@ COSMIC_ACTIVATION:
   RESTRICTIONS:
     where: Most gameplay situations
     not_available: 
-      - Surfing levels
-      - Snowboarding levels
       - Flying levels (ship-based)
       - Bonus stages
       - Boss cutscenes
@@ -4865,16 +4130,6 @@ WORLD_MAP_ELEMENTS:
       states: Locked, Available, Completed
       required: Must complete for zone progression
       
-    SURFING_LEVEL:
-      appearance: Wave icon platform
-      states: Locked, Available, Completed
-      optional: Usually not required for main path
-      
-    SNOWBOARDING_LEVEL:
-      appearance: Mountain slope icon
-      states: Locked, Available, Completed
-      optional: Usually not required for main path
-      
     FLYING_TRANSITION:
       appearance: Runway/launch pad
       connects: Current zone to next zone
@@ -4923,8 +4178,6 @@ ZONE_PHILOSOPHY:
     main_levels: 4-6 standard platforming levels
     fortress_levels: 1-2 mid-zone boss levels
     boss_level: 1 final zone boss
-    surfing_levels: 0-2 (zone-dependent)
-    snowboarding_levels: 0-2 (zone-dependent)
     
   PROGRESSION:
     branching_paths: Multiple routes through zone
@@ -4949,7 +4202,7 @@ ZONE_TEMPLATE:
     act_3: Challenge level (tests mastery)
     fortress: Mid-boss level
     act_4: Pre-boss level
-    act_5: Optional content (surfing/snowboarding)
+    act_5: Optional content
     boss: Zone final boss
     
   UNLOCKING:
@@ -5019,8 +4272,6 @@ ZONE_1: TROPICA_VILLAGE
     1-B: "Syndicate Outpost" (Zone Boss: Corrupted Tiki)
     
   SPECIAL_FEATURES:
-    surfing: None (unlocks later)
-    snowboarding: None
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5042,12 +4293,10 @@ ZONE_2: EMERALD_JUNGLE
     2-2: "Root Network" (Underground/roots)
     2-3: "Treetop Village" (Elevated platforms)
     2-4: "Mystic Grove" (Bioluminescent area)
-    2-S: "Rapids Rush" (Surfing level)
     2-F: "Overgrown Fortress" (Fortress)
     2-B: "Heart of the Jungle" (Boss: Jungle Guardian)
     
   SPECIAL_FEATURES:
-    surfing: 1 level (river surfing variant)
     cosmic_crystal: Crystal 1 location
     
   UNLOCKS:
@@ -5073,7 +4322,6 @@ ZONE_3: CORAL_REEF
     3-B: "Abyssal Depths" (Boss: Commander Nexus #1)
     
   SPECIAL_FEATURES:
-    surfing: 1 level (ocean surfing)
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5087,20 +4335,16 @@ ZONE_4: SUNSET_BEACH
 
   theme: Coastal paradise at golden hour
   aesthetic: Orange skies, pier structures, boardwalks
-  story: Major surfing competition storyline
   
   LEVELS:
     4-1: "Boardwalk Blitz" (Pier platforming)
     4-2: "Lighthouse Loop" (Vertical challenge)
     4-3: "Tidal Caves" (Cave sections)
-    4-S1: "Wave Rider" (Surfing competition #1)
-    4-S2: "Barrel Challenge" (Surfing competition #2)
     4-F: "Pier Fortress" (Fortress)
     4-4: "Sunset Sprint" (Speed-focused)
     4-B: "Beach Showdown" (Boss: Surge #1)
     
   SPECIAL_FEATURES:
-    surfing: 2 levels
     cosmic_crystal: Crystal 2 location
     
   UNLOCKS:
@@ -5166,20 +4410,16 @@ ZONE_7: FROZEN_PEAKS
 
   theme: Snowy mountains, ski resort
   aesthetic: Snow, ice, alpine structures
-  story: Learn snowboarding from northern tribes
   
   LEVELS:
     7-1: "Snowy Summit" (Ice physics intro)
     7-2: "Avalanche Alley" (Hazard focused)
-    7-SB1: "Peak Descent" (Snowboarding #1)
     7-3: "Frozen Falls" (Ice waterfall area)
     7-4: "Ski Lodge" (Indoor/outdoor mix)
     7-F: "Ice Fortress" (Fortress)
-    7-SB2: "Mountain Marathon" (Snowboarding #2)
     7-B: "Summit Showdown" (Boss: Frost Titan)
     
   SPECIAL_FEATURES:
-    snowboarding: 2 levels (first appearance)
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5200,14 +4440,12 @@ ZONE_8: GLACIAL_VALLEY
     8-1: "Glacier Path" (Slippery terrain)
     8-2: "Frozen Sea" (Ice floe platforming)
     8-3: "Ice Cave Network" (Cave exploration)
-    8-SB: "Valley Run" (Snowboarding)
     8-4: "Aurora Fields" (Night ice level)
     8-F: "Frost Fortress" (Fortress - Nexus #2)
     8-5: "Cracking Ice" (Breaking platforms)
     8-B: "Heart of Winter" (Boss: Blizzard Beast)
     
   SPECIAL_FEATURES:
-    snowboarding: 1 level
     cosmic_crystal: Crystal 4 location
     
   UNLOCKS:
@@ -5228,13 +4466,11 @@ ZONE_9: SCORCHING_SANDS
     9-2: "Sandstorm Sprint" (Visibility challenge)
     9-3: "Pyramid Exterior" (Climbing structure)
     9-4: "Tomb Depths" (Indoor puzzles)
-    9-S: "Sand Surfing" (Surfing on sand variant)
     9-F: "Desert Fortress" (Fortress - Surge #2)
     9-5: "Quicksand Quarry" (Hazard focus)
     9-B: "Pharaoh's Chamber" (Boss: Sand Colossus)
     
   SPECIAL_FEATURES:
-    surfing: 1 level (sand surfing)
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5255,12 +4491,10 @@ ZONE_10: MIRAGE_OASIS
     10-2: "Mirage Maze" (Visual tricks)
     10-3: "Hidden Springs" (Exploration)
     10-4: "Market District" (NPC area, light combat)
-    10-S: "Oasis Waves" (Surfing)
     10-F: "Illusion Fortress" (Fortress - Glitch #2)
     10-B: "Reality Shift" (Boss: Mirage Master)
     
   SPECIAL_FEATURES:
-    surfing: 1 level
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5335,14 +4569,12 @@ ZONE_13: NEON_CIRCUIT
     13-2: "Highway Chase" (Speed focus)
     13-3: "Rooftop Run" (Vertical city)
     13-4: "Underground Club" (Indoor neon)
-    13-S: "Neon Waves" (Cyber surfing)
     13-5: "Skybridge" (High platforms)
     13-F: "Data Center" (Fortress - Glitch #3)
     13-6: "Tower Climb" (Ascent level)
     13-B: "Pinnacle Plaza" (Boss: Neon Dragon)
     
   SPECIAL_FEATURES:
-    surfing: 1 level (digital waves)
     cosmic_crystal: Crystal 6 location
     
   UNLOCKS:
@@ -5416,13 +4648,11 @@ ZONE_16: GRAVITY_GARDENS
     16-3: "Gravity Flip" (Gravity mechanics)
     16-4: "Space Garden" (Alien plants)
     16-5: "Zero-G Zone" (Free-floating section)
-    16-SB: "Comet Chase" (Snowboarding on comet)
     16-F: "Orbital Fortress" (Fortress - Titanica #3)
     16-6: "Station Approach" (Pre-final zone)
     16-B: "Garden Guardian" (Boss: Cosmic Entity)
     
   SPECIAL_FEATURES:
-    snowboarding: 1 level (comet variant)
     cosmic_crystal: None
     
   UNLOCKS:
@@ -5824,13 +5054,6 @@ COOP_MODE_SUPPORT:
     support: Full
     camera: Shared arena view (no split)
     strategy: Coordinate attacks
-    
-  SURFING_LEVELS:
-    support: Full (split-screen racing)
-    competition: Friendly (both must finish)
-    
-  SNOWBOARDING_LEVELS:
-    support: Full (split-screen)
     
   FLYING_LEVELS:
     support: Full (two ships)
@@ -6386,7 +5609,7 @@ LEVEL_EDITOR_PHILOSOPHY:
 
   goal: Empower players to create and share content
   scope: 3D Platforming, 2D Sections, Boss Arenas
-  excluded: Surfing, Snowboarding, Flying levels
+  excluded: Flying levels
   
   design_principles:
     - Accessible to beginners
@@ -6408,8 +5631,6 @@ EDITOR_CAPABILITIES:
     ✓ Challenge rooms
     
   NOT_SUPPORTED:
-    ✗ Surfing levels (wave system too complex)
-    ✗ Snowboarding levels (terrain generation)
     ✗ Flying levels (on-rails pathing)
     ✗ Story cutscenes
     ✗ New enemies/bosses (use existing)
@@ -7531,13 +6752,10 @@ NAMED_VILLAGERS:
       
     MARINA:
       rescue: Zone 4
-      role: Surfing mentor
-      special: Surfing tips, MP character unlock
       
     FROST:
       rescue: Zone 7
       role: Northern visitor
-      special: Snowboarding tips, MP character unlock
       
   GENERIC_VILLAGERS:
     appearance: Randomized from pool
@@ -7771,14 +6989,6 @@ HUD_VARIATIONS:
     additions: Boss health bar, boss name, phase indicator
     removals: Time (optional)
       
-  SURFING_HUD:
-    additions: Stoke meter, objective tracker, trick popup
-    changes: Score more prominent
-      
-  SNOWBOARDING_HUD:
-    additions: Speed indicator, enemy proximity warning
-    changes: Simplified layout
-      
   FLYING_HUD:
     additions: Ship health, weapon power, bomb count, reticle
     changes: Cockpit-style frame (optional)
@@ -7983,8 +7193,6 @@ DEVELOPMENT_PHASES:
   PHASE_2: Gameplay Variety (3-4 months)
     - 2D section system
     - Boss encounter framework
-    - Surfing gameplay
-    - Snowboarding gameplay
     - Flying level gameplay
     - 6 additional zones
     
@@ -8032,7 +7240,7 @@ PRIORITY_MATRIX:
     - Story mode completion
     
   HIGH (Should Have):
-    - Alternative gameplay (Surfing, Snowboarding, Flying)
+    - Alternative gameplay (Flying)
     - Bonus stages
     - Co-op multiplayer
     - Basic level editor
@@ -8085,7 +7293,6 @@ GLOSSARY:
     Adjustable level of PS1/Saturn visual effects
     
   STOKE_METER: 
-    Boost meter in surfing levels
     
   TROPICA_VILLAGE: 
     Gina's home village, destroyed at game start
@@ -8126,18 +7333,6 @@ PLATFORMING_CONTROLS:
   Homing Attack: A (air) / Space (air)
   Boost: RT / Mouse1
   
-SURFING_CONTROLS:
-  Steer: Left Stick / WASD
-  Jump: A / Space
-  Shuvit: LB/RB / Shift/E
-  Turbo: RT / Mouse1
-  
-SNOWBOARDING_CONTROLS:
-  Steer: Left Stick / WASD
-  Jump: A / Space
-  Carve: LB/RB / Shift/E
-  Ram: RT / Mouse1
-  
 FLYING_CONTROLS:
   Move: Left Stick / WASD
   Shoot: A / Space
@@ -8163,8 +7358,6 @@ GAMEPLAY_MODES:
   3D Platforming: Main gameplay, curved world
   2D Sections: Side-scrolling, all abilities
   Boss Fights: 3-phase encounters, no curved world
-  Surfing: Surf's Up style, score attack
-  Snowboarding: 1080° style, survival
   Flying: Star Fox style, on-rails shooter
   Pool Bonus: Billiards puzzle
   Pinball Bonus: Prize collection

@@ -1,6 +1,7 @@
-[gd_scene load_steps=7 format=3 uid="uid://cima0a4x3ju1g"]
+[gd_scene load_steps=8 format=3 uid="uid://cima0a4x3ju1g"]
 
 [ext_resource type="Script" uid="uid://bf743pu2fyarx" path="res://scripts/player_controller.gd" id="1_p5ehy"]
+[ext_resource type="Shader" uid="uid://bcn68758vxisu" path="res://addons/xtreme_level_editor/shaders/retro/retro_standard.gdshader" id="2_retro"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
@@ -10,18 +11,29 @@ height = 1.8
 radius = 0.4
 height = 1.8
 
-[sub_resource type="StandardMaterial3D" id="Material_player"]
-albedo_color = Color(0.2, 0.6, 1, 1)
+[sub_resource type="ShaderMaterial" id="Material_player"]
+shader = ExtResource("2_retro")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/albedo = Color(0.2, 0.6, 1, 1)
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/lighting_enabled = true
 
 [sub_resource type="SphereMesh" id="SphereMesh_face"]
 radius = 0.2
 height = 0.4
 
-[sub_resource type="StandardMaterial3D" id="Material_face"]
-albedo_color = Color(1, 0.9, 0.1, 1)
-emission_enabled = true
-emission = Color(1, 0.9, 0.1, 1)
-emission_energy_multiplier = 0.8
+[sub_resource type="ShaderMaterial" id="Material_face"]
+shader = ExtResource("2_retro")
+shader_parameter/retro_enabled = true
+shader_parameter/retro_intensity = 0.35
+shader_parameter/albedo = Color(1, 0.9, 0.1, 1)
+shader_parameter/use_texture = false
+shader_parameter/use_vertex_color = false
+shader_parameter/lighting_enabled = false
+shader_parameter/emission_color = Color(1, 0.9, 0.1, 1)
+shader_parameter/emission_intensity = 0.8
 
 [node name="Player" type="CharacterBody3D" groups=["player"]]
 script = ExtResource("1_p5ehy")
