@@ -17,6 +17,17 @@ extends Resource
 @export var size_y: int = 32
 @export var size_z: int = 64
 
+## Lowest addressable cell. The editable space runs origin .. origin + size - 1.
+##
+## Defaults to zero so existing levels are unchanged, but new levels are created
+## with a negative origin.y so the starting edit plane sits in the MIDDLE of the
+## vertical range instead of hard against the floor — otherwise you can only
+## ever build upward from where you start.
+##
+## Tile coordinates are absolute, so changing the origin never moves existing
+## geometry; it only changes which cells are addressable.
+@export var origin: Vector3i = Vector3i.ZERO
+
 ## Theme tag for this level (affects procedural generation)
 @export var theme: String = "default"
 
@@ -401,9 +412,50 @@ func get_connection_points_on_face(direction: Vector3i) -> Array[Dictionary]:
 # ============ Private Methods ============
 
 func _is_valid_position(pos: Vector3i) -> bool:
-	return pos.x >= 0 and pos.x < size_x \
-		and pos.y >= 0 and pos.y < size_y \
-		and pos.z >= 0 and pos.z < size_z
+	var mn := get_min_cell()
+	var mx := get_max_cell()
+	return pos.x >= mn.x and pos.x <= mx.x \
+		and pos.y >= mn.y and pos.y <= mx.y \
+		and pos.z >= mn.z and pos.z <= mx.z
+
+
+## Lowest addressable cell (inclusive).
+func get_min_cell() -> Vector3i:
+	return origin
+
+
+## Highest addressable cell (inclusive).
+func get_max_cell() -> Vector3i:
+	return origin + Vector3i(size_x - 1, size_y - 1, size_z - 1)
+
+
+## Bounding box of cells that actually contain tiles, or null-ish when empty.
+## Used to keep origin/size changes from orphaning existing geometry.
+func get_used_cell_bounds() -> Dictionary:
+	if _grid_data.is_empty():
+		return {"empty": true, "min": Vector3i.ZERO, "max": Vector3i.ZERO}
+	var mn := Vector3i(2147483647, 2147483647, 2147483647)
+	var mx := Vector3i(-2147483648, -2147483648, -2147483648)
+	for key in _grid_data.keys():
+		var p := _key_to_pos(key)
+		mn = Vector3i(mini(mn.x, p.x), mini(mn.y, p.y), mini(mn.z, p.z))
+		mx = Vector3i(maxi(mx.x, p.x), maxi(mx.y, p.y), maxi(mx.z, p.z))
+	return {"empty": false, "min": mn, "max": mx}
+
+
+## Move the bottom of the editable space without discarding any geometry.
+## Lowering the floor grows the level downward; the ceiling stays put.
+func set_origin_y(new_origin_y: int) -> void:
+	var top := origin.y + size_y  # exclusive
+	var used := get_used_cell_bounds()
+	if not used["empty"]:
+		# Never orphan tiles that already exist above or below.
+		new_origin_y = mini(new_origin_y, (used["min"] as Vector3i).y)
+		top = maxi(top, (used["max"] as Vector3i).y + 1)
+	origin.y = new_origin_y
+	size_y = maxi(1, top - new_origin_y)
+	_update_modified_time()
+	emit_changed()
 
 func _pos_to_key(pos: Vector3i) -> String:
 	return "%d,%d,%d" % [pos.x, pos.y, pos.z]

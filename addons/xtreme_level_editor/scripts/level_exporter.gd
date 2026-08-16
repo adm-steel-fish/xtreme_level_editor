@@ -246,7 +246,8 @@ func _export_hybrid_chunked(root: Node3D) -> void:
 			static_chunks[chunk_key] = {
 				"coord": chunk_coord,
 				"batches": {},
-				"solid_positions": []
+				"solid_positions": [],
+				"mesh_collision": {}
 			}
 
 		var batches: Dictionary = static_chunks[chunk_key]["batches"]
@@ -259,8 +260,20 @@ func _export_hybrid_chunked(root: Node3D) -> void:
 			}
 		batches[batch_key]["positions"].append(tile_pos)
 
-		if tile_def.is_solid:
+		# Collision routing: grid-cell tiles feed the run-merged box body,
+		# MESH_EXACT tiles get their own trimesh, NONE gets nothing.
+		if tile_def.contributes_grid_collision():
 			static_chunks[chunk_key]["solid_positions"].append(tile_pos)
+		elif tile_def.is_solid and tile_def.has_custom_mesh() \
+				and tile_def.mesh_collision == XtremeTileDefinition.MeshCollision.MESH_EXACT:
+			var exact: Dictionary = static_chunks[chunk_key]["mesh_collision"]
+			if batch_key not in exact:
+				exact[batch_key] = {
+					"tile_def": tile_def,
+					"rotation": rotation,
+					"positions": []
+				}
+			exact[batch_key]["positions"].append(tile_pos)
 
 	for chunk_key in static_chunks.keys():
 		var chunk_data: Dictionary = static_chunks[chunk_key]
@@ -286,6 +299,15 @@ func _export_hybrid_chunked(root: Node3D) -> void:
 			var chunk_collision := _create_collision_body_from_positions(solid_positions)
 			if chunk_collision:
 				chunk_node.add_child(chunk_collision)
+
+		# Exact-silhouette collision for custom-mesh tiles that asked for it.
+		var mesh_collision: Dictionary = chunk_data["mesh_collision"]
+		for exact_key in mesh_collision.keys():
+			var exact_data: Dictionary = mesh_collision[exact_key]
+			var exact_body := _create_mesh_collision_body(
+				exact_data["positions"], exact_data["tile_def"], exact_data["rotation"])
+			if exact_body:
+				chunk_node.add_child(exact_body)
 
 
 func _export_traversal_world(root: Node3D) -> void:
@@ -521,6 +543,7 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 		return null
 
 	var visual_size := _get_tile_visual_size(tile_def, rotation)
+	var use_custom_mesh := tile_def.has_custom_mesh()
 
 	# Use ArrayMesh to combine all cubes into one mesh.
 	var surface_tool := SurfaceTool.new()
@@ -539,6 +562,14 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 			rotation.z * PI / 2.0
 		))
 
+	# Custom meshes are baked once per placement, so read their layout up front:
+	# SurfaceTool requires every vertex in a surface to carry the same attributes.
+	var mesh_layout := {}
+	var mesh_local := Transform3D.IDENTITY
+	if use_custom_mesh:
+		mesh_layout = _describe_mesh_attributes(tile_def.mesh)
+		mesh_local = tile_def.get_mesh_local_transform()
+
 	for pos_variant in positions:
 		var pos := pos_variant as Vector3i
 		var world_pos := _get_tile_world_center(pos, tile_def, rotation)
@@ -547,10 +578,22 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 		min_bounds = min_bounds.min(world_pos - visual_size * 0.5)
 		max_bounds = max_bounds.max(world_pos + visual_size * 0.5)
 
-		# Add cube with hidden face removal and rotation.
-		_add_cube_with_occlusion_rotated(surface_tool, pos, world_pos, visual_size, rot_basis)
+		if use_custom_mesh:
+			# Grid rotation is applied on top of the mesh's own base orientation.
+			var instance_xform := Transform3D(rot_basis, world_pos) * mesh_local
+			var mesh_aabb := _append_mesh_to_surface(
+				surface_tool, tile_def.mesh, instance_xform, mesh_layout)
+			# A custom mesh may overflow its cell, so grow the bounds to match.
+			min_bounds = min_bounds.min(mesh_aabb.position)
+			max_bounds = max_bounds.max(mesh_aabb.position + mesh_aabb.size)
+		else:
+			# Add cube with hidden face removal and rotation.
+			_add_cube_with_occlusion_rotated(surface_tool, pos, world_pos, visual_size, rot_basis)
 
-	surface_tool.generate_normals()
+	# Only synthesise normals when the source geometry did not supply them;
+	# regenerating over an imported mesh flattens its intended shading.
+	if not use_custom_mesh or not bool(mesh_layout.get("has_normals", false)):
+		surface_tool.generate_normals()
 	var array_mesh := surface_tool.commit()
 	if not array_mesh or array_mesh.get_surface_count() == 0:
 		return null
@@ -569,9 +612,164 @@ func _create_batched_mesh_with_rotation(positions: Array, tile_def: XtremeTileDe
 	var expanded_max := max_bounds + Vector3(aabb_expansion, aabb_expansion, aabb_expansion)
 	mesh_instance.custom_aabb = AABB(expanded_min, expanded_max - expanded_min)
 
-	# Shared material per tile type.
-	mesh_instance.material_override = _get_or_create_material(tile_def)
+	# Shared material per tile type. Custom meshes may opt out to keep their own
+	# surface materials — at the cost of not bending with the curved world.
+	if use_custom_mesh and tile_def.mesh_keep_own_materials:
+		var baked := _get_first_mesh_material(tile_def.mesh)
+		if baked:
+			mesh_instance.material_override = baked
+		else:
+			push_warning("XtremeLevelExporter: tile '%s' has mesh_keep_own_materials set but its mesh has no material; falling back to the curved-world material" % tile_def.tile_id)
+			mesh_instance.material_override = _get_or_create_material(tile_def)
+	else:
+		mesh_instance.material_override = _get_or_create_material(tile_def)
 	return mesh_instance
+
+
+## SurfaceTool needs every vertex in a surface to carry identical attributes, so
+## decide once per mesh which channels exist rather than per vertex.
+func _describe_mesh_attributes(mesh: Mesh) -> Dictionary:
+	var layout := {"has_normals": false, "has_uvs": false, "has_colors": false}
+	if mesh == null or mesh.get_surface_count() == 0:
+		return layout
+	# Judge from the first surface; mixed-layout surfaces fall back to whatever
+	# the first one declares, which keeps the committed surface valid.
+	var arrays: Array = mesh.surface_get_arrays(0)
+	if arrays.size() > Mesh.ARRAY_MAX:
+		return layout
+	layout["has_normals"] = arrays[Mesh.ARRAY_NORMAL] != null
+	layout["has_uvs"] = arrays[Mesh.ARRAY_TEX_UV] != null
+	layout["has_colors"] = arrays[Mesh.ARRAY_COLOR] != null
+	return layout
+
+
+## Bake every surface of `mesh` into `st`, transformed into world space.
+## Returns the world-space AABB of what was appended.
+##
+## Indexed geometry is expanded into a flat triangle list on purpose: the
+## curved-world shader derives its wireframe barycentrics from VERTEX_ID % 3,
+## which is only correct for non-indexed meshes. Imported meshes are almost
+## always indexed, so skipping this would silently break the wireframe.
+func _append_mesh_to_surface(
+	st: SurfaceTool,
+	mesh: Mesh,
+	xform: Transform3D,
+	layout: Dictionary
+) -> AABB:
+	var bounds := AABB(xform.origin, Vector3.ZERO)
+	var first := true
+	if mesh == null:
+		return bounds
+
+	var normal_basis := xform.basis.inverse().transposed()
+	var has_normals := bool(layout.get("has_normals", false))
+	var has_uvs := bool(layout.get("has_uvs", false))
+	var has_colors := bool(layout.get("has_colors", false))
+
+	for surface_index in range(mesh.get_surface_count()):
+		# surface_get_primitive_type() only exists on ArrayMesh. PrimitiveMesh
+		# subclasses (BoxMesh, SphereMesh, imported primitives...) are always
+		# triangles, so only screen the ones we can ask.
+		if mesh is ArrayMesh:
+			if (mesh as ArrayMesh).surface_get_primitive_type(surface_index) != Mesh.PRIMITIVE_TRIANGLES:
+				continue
+		var arrays: Array = mesh.surface_get_arrays(surface_index)
+		if arrays.is_empty():
+			continue
+
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		if verts.is_empty():
+			continue
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL] if arrays[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+		var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+
+		# Walk indices when present so the output is de-indexed.
+		var count := indices.size() if not indices.is_empty() else verts.size()
+		for i in range(count):
+			var vi := indices[i] if not indices.is_empty() else i
+			if vi < 0 or vi >= verts.size():
+				continue
+
+			if has_normals:
+				var n := normals[vi] if vi < normals.size() else Vector3.UP
+				st.set_normal((normal_basis * n).normalized())
+			if has_uvs:
+				st.set_uv(uvs[vi] if vi < uvs.size() else Vector2.ZERO)
+			if has_colors:
+				st.set_color(colors[vi] if vi < colors.size() else Color.WHITE)
+
+			var world_v: Vector3 = xform * verts[vi]
+			st.add_vertex(world_v)
+
+			if first:
+				bounds = AABB(world_v, Vector3.ZERO)
+				first = false
+			else:
+				bounds = bounds.expand(world_v)
+
+	return bounds
+
+
+## Build one trimesh StaticBody3D covering every placement of a MESH_EXACT tile
+## within a chunk. Batched per tile type so a chunk gets a handful of bodies
+## rather than one per cell.
+func _create_mesh_collision_body(
+	positions: Array,
+	tile_def: XtremeTileDefinition,
+	rotation: Vector3i
+) -> StaticBody3D:
+	if positions.is_empty() or not tile_def.has_custom_mesh():
+		return null
+
+	var rot_basis := Basis.IDENTITY
+	if rotation != Vector3i.ZERO:
+		rot_basis = Basis.from_euler(Vector3(
+			rotation.x * PI / 2.0,
+			rotation.y * PI / 2.0,
+			rotation.z * PI / 2.0
+		))
+	var mesh_local := tile_def.get_mesh_local_transform()
+	var layout := _describe_mesh_attributes(tile_def.mesh)
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for pos_variant in positions:
+		var pos := pos_variant as Vector3i
+		var world_pos := _get_tile_world_center(pos, tile_def, rotation)
+		var instance_xform := Transform3D(rot_basis, world_pos) * mesh_local
+		_append_mesh_to_surface(st, tile_def.mesh, instance_xform, layout)
+
+	if not bool(layout.get("has_normals", false)):
+		st.generate_normals()
+	var collision_mesh := st.commit()
+	if collision_mesh == null or collision_mesh.get_surface_count() == 0:
+		return null
+
+	var shape := collision_mesh.create_trimesh_shape()
+	if shape == null:
+		push_warning("XtremeLevelExporter: could not build trimesh collision for tile '%s'" % tile_def.tile_id)
+		return null
+
+	var body := StaticBody3D.new()
+	body.name = "%s_MeshCollision" % str(tile_def.tile_id)
+	var col := CollisionShape3D.new()
+	col.name = "Shape"
+	col.shape = shape
+	body.add_child(col)
+	return body
+
+
+## First non-null surface material on a mesh, if any.
+func _get_first_mesh_material(mesh: Mesh) -> Material:
+	if mesh == null:
+		return null
+	for i in range(mesh.get_surface_count()):
+		var m := mesh.surface_get_material(i)
+		if m:
+			return m
+	return null
 
 
 func _add_cube_with_occlusion_rotated(st: SurfaceTool, grid_pos: Vector3i, center: Vector3, size: Vector3, rot_basis: Basis) -> void:

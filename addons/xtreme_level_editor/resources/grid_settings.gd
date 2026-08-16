@@ -5,6 +5,17 @@ extends Resource
 ## Global grid settings that affect all level editor instances.
 ## Change these to adjust cell sizes project-wide.
 
+## Path to the saved tile palette (.tres), if the project has one.
+##
+## The editor builds a default palette in code on every start. Once you edit a
+## tile — assigning a custom mesh, for instance — the palette must be saved to
+## disk or the change is lost on the next reload. Saving from the editor dock
+## records the path here so it is reloaded automatically.
+@export var palette_path: String = "":
+	set(value):
+		palette_path = value
+		emit_changed()
+
 ## Cell dimensions on X axis (in Godot units)
 @export var cell_size_x: float = 2.0:
 	set(value):

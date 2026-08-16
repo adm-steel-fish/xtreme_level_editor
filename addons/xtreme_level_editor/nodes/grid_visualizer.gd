@@ -233,7 +233,12 @@ func _rebuild_bounds() -> void:
 	
 	var cell_size := grid_settings.get_cell_size()
 	var level_size := Vector3(level_data.size_x, level_data.size_y, level_data.size_z) * cell_size
-	
+
+	# The box is built from the origin corner outward, so shift the whole mesh
+	# by the level origin rather than rewriting every vertex. Levels with a
+	# negative origin.y then show their bounds below y=0 where they belong.
+	_bounds_mesh.position = Vector3(level_data.origin) * cell_size
+
 	# Create wireframe box for bounds
 	var im := ImmediateMesh.new()
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
@@ -323,6 +328,18 @@ func _create_tile_visual(pos: Vector3i) -> void:
 	if tile_def and tile_def.tile_scene:
 		# Use the tile's scene
 		visual = tile_def.tile_scene.instantiate()
+	elif tile_def and tile_def.has_custom_mesh():
+		# Custom mesh tile. Wrap in a holder so the mesh's own offset/rotation/
+		# scale survive the position and grid-rotation applied below — this
+		# mirrors the exporter's Transform3D(rot_basis, world_pos) * mesh_local,
+		# so what you see here is what gets baked.
+		var holder := Node3D.new()
+		var custom_instance := MeshInstance3D.new()
+		custom_instance.name = "Mesh"
+		custom_instance.mesh = tile_def.mesh
+		custom_instance.transform = tile_def.get_mesh_local_transform()
+		holder.add_child(custom_instance)
+		visual = holder
 	elif tile_def and tile_def.preview_mesh:
 		# Use preview mesh
 		var mesh_instance := MeshInstance3D.new()
@@ -357,9 +374,18 @@ func _create_tile_visual(pos: Vector3i) -> void:
 	add_child(visual)
 	_tile_instances[pos] = visual
 	
-	# Apply curved world material if preview is enabled
-	if (curved_preview_enabled or distance_effects_enabled) and visual is MeshInstance3D:
-		_apply_curved_material(visual as MeshInstance3D)
+	# Apply curved world material if preview is enabled.
+	# Recurses, so custom-mesh holders and scene-based tiles get it too — a
+	# plain `visual is MeshInstance3D` check missed both.
+	if curved_preview_enabled or distance_effects_enabled:
+		_apply_curved_material_recursive(visual)
+
+
+func _apply_curved_material_recursive(node: Node) -> void:
+	if node is MeshInstance3D:
+		_apply_curved_material(node as MeshInstance3D)
+	for child in node.get_children():
+		_apply_curved_material_recursive(child)
 
 func _remove_tile_visual(pos: Vector3i) -> void:
 	if pos in _tile_instances:

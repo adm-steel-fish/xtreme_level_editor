@@ -42,6 +42,46 @@ func is_multicell() -> bool:
 ## Preview mesh for editor visualization (if different from scene)
 @export var preview_mesh: Mesh
 
+@export_group("Custom Mesh")
+## Replaces the default grid cube with freeform art (a .obj/.glb mesh, or any
+## Godot Mesh resource). The tile still occupies its grid cell — placement,
+## chunking and collision continue to work exactly as they do for cubes — so
+## you get modelled geometry without giving up the editor's level flow.
+##
+## Leave null to use the standard cube.
+@export var mesh: Mesh:
+	set(value):
+		mesh = value
+		emit_changed()
+
+## How collision is generated for a custom-mesh tile.
+enum MeshCollision {
+	GRID_CELL,   ## Grid cube collision (fast, run-merged, predictable to platform on)
+	MESH_EXACT,  ## The mesh's own trimesh shape (precise, heavier, no run-merging)
+	NONE,        ## No collision at all - pure decoration
+}
+
+## Collision strategy. GRID_CELL is strongly preferred for anything the player
+## walks on: it run-merges into a handful of box shapes and keeps movement
+## predictable. Use MESH_EXACT only where the silhouette really must be exact.
+@export var mesh_collision: MeshCollision = MeshCollision.GRID_CELL
+
+## Offset applied to the mesh inside its cell, in world units.
+@export var mesh_offset: Vector3 = Vector3.ZERO
+
+## Base orientation fix for imported assets, applied BEFORE the per-tile
+## rotation set in the editor. Use this when a model exports Z-up or backwards.
+@export var mesh_rotation_degrees: Vector3 = Vector3.ZERO
+
+## Scale applied to the mesh. Does not change the cell footprint.
+@export var mesh_scale: Vector3 = Vector3.ONE
+
+## Keep the mesh's own surface materials instead of applying the tile's
+## curved-world material.
+## WARNING: the mesh's own materials will NOT bend with the curved world unless
+## they use a curve-aware shader. Leave this off unless you know they do.
+@export var mesh_keep_own_materials: bool = false
+
 @export_group("Behavior")
 ## Type classification
 enum TileType {
@@ -131,6 +171,33 @@ func _get_opposite_face(face: String) -> String:
 ## Check if this tile matches a theme
 func matches_theme(theme: String) -> bool:
 	return theme_tags.is_empty() or theme in theme_tags
+
+## Does this tile render as a custom mesh instead of the default cube?
+func has_custom_mesh() -> bool:
+	return mesh != null
+
+
+## Local transform applied to the custom mesh inside its cell, before the
+## per-tile grid rotation. Shared by the exporter and the editor preview so
+## both show the mesh in the same place.
+func get_mesh_local_transform() -> Transform3D:
+	var basis := Basis.from_euler(Vector3(
+		deg_to_rad(mesh_rotation_degrees.x),
+		deg_to_rad(mesh_rotation_degrees.y),
+		deg_to_rad(mesh_rotation_degrees.z)
+	))
+	basis = basis.scaled(mesh_scale)
+	return Transform3D(basis, mesh_offset)
+
+
+## Should this tile contribute a grid cell to the chunk's merged collision body?
+func contributes_grid_collision() -> bool:
+	if not is_solid:
+		return false
+	if has_custom_mesh():
+		return mesh_collision == MeshCollision.GRID_CELL
+	return true
+
 
 ## Get the footprint size after rotation
 func get_rotated_size(rotation: Vector3i) -> Vector3i:

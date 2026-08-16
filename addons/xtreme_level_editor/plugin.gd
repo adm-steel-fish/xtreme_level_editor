@@ -26,6 +26,7 @@ const RAIL_NEIGHBOR_DIRECTIONS: Array[Vector3i] = [
 var _main_dock: Control
 var _tile_selector: OptionButton
 var _y_level_spinbox: SpinBox
+var _origin_y_spinbox: SpinBox
 var _brush_size_spinbox: SpinBox
 var _grid_visible_check: CheckBox
 var _context_menu: PopupMenu
@@ -39,6 +40,7 @@ var _grid_visualizer: XtremeGridVisualizer
 var _grid_lines_mesh: MeshInstance3D
 var _selection_box_mesh: MeshInstance3D
 var _brush_preview_mesh: MeshInstance3D
+var _brush_preview_ghost: MeshInstance3D
 var _brush_preview_material: StandardMaterial3D
 var _rect_preview_mesh: MeshInstance3D
 var _select_preview_mesh: MeshInstance3D
@@ -217,6 +219,9 @@ func _cleanup_visualizer() -> void:
 		_selection_box_mesh.queue_free()
 		_selection_box_mesh = null
 	if _brush_preview_mesh and is_instance_valid(_brush_preview_mesh):
+		# The ghost is a child, so freeing the parent frees it too — just drop
+		# our reference so it cannot dangle.
+		_brush_preview_ghost = null
 		_brush_preview_mesh.queue_free()
 		_brush_preview_mesh = null
 	if _rect_preview_mesh and is_instance_valid(_rect_preview_mesh):
@@ -252,6 +257,7 @@ func _on_scene_loaded() -> void:
 	_grid_lines_mesh = null
 	_selection_box_mesh = null
 	_brush_preview_mesh = null
+	_brush_preview_ghost = null
 	_rect_preview_mesh = null
 	_select_preview_mesh = null
 	_rail_grid_preview_mesh = null
@@ -324,6 +330,22 @@ func _load_or_create_settings() -> void:
 		ResourceSaver.save(_grid_settings, SETTINGS_PATH)
 
 func _create_default_palette() -> void:
+	# Prefer a saved palette so per-tile edits (custom meshes, collision modes,
+	# colours) survive a reload. Fall back to the code-built defaults.
+	if _grid_settings and _grid_settings.palette_path != "":
+		if ResourceLoader.exists(_grid_settings.palette_path):
+			var saved := load(_grid_settings.palette_path) as XtremeTilePalette
+			if saved and not saved.tiles.is_empty():
+				_current_palette = saved
+				print("[Xtreme Level Editor] Loaded palette: %s (%d tiles)"
+					% [_grid_settings.palette_path, saved.tiles.size()])
+				return
+			push_warning("[Xtreme Level Editor] Palette at '%s' was empty or invalid; using defaults"
+				% _grid_settings.palette_path)
+		else:
+			push_warning("[Xtreme Level Editor] Saved palette '%s' no longer exists; using defaults"
+				% _grid_settings.palette_path)
+
 	# Use the full default palette from default_tiles.gd
 	var DefaultTiles := preload("res://addons/xtreme_level_editor/scripts/default_tiles.gd")
 	_current_palette = DefaultTiles.create_default_palette()
@@ -532,19 +554,125 @@ func _update_shape_tool_visibility() -> void:
 	if panel:
 		panel.visible = (_edit_mode == 6)
 
+func _on_level_origin_y_changed(value: float) -> void:
+	if not _current_level:
+		return
+	_current_level.set_origin_y(int(value))
+	_after_vertical_range_changed()
+
+
+func _on_center_level_vertically() -> void:
+	if not _current_level:
+		return
+	# Put y=0 in the middle, without discarding anything already built.
+	_current_level.set_origin_y(-(_current_level.size_y / 2))
+	_current_y_level = _default_edit_plane()
+	_after_vertical_range_changed()
+	_set_status("Vertical range centred: Y %d to %d"
+		% [_current_level.get_min_cell().y, _current_level.get_max_cell().y])
+
+
+## Refresh everything that depends on the level's vertical extent.
+func _after_vertical_range_changed() -> void:
+	_sync_y_level_range()
+	_sync_level_size_controls()
+	if _grid_visualizer and is_instance_valid(_grid_visualizer):
+		# The visualizer reads level_data.origin directly, so a rebuild is enough.
+		_grid_visualizer.rebuild()
+	_update_grid_lines()
+	_update_selection_visual()
+
+
+## Push the level's current size/origin back into the dock spinboxes.
+func _sync_level_size_controls() -> void:
+	if not _current_level or not _main_dock:
+		return
+	var size_y := _main_dock.find_child("LevelSizeY", true, false) as SpinBox
+	if size_y:
+		size_y.set_block_signals(true)
+		size_y.value = _current_level.size_y
+		size_y.set_block_signals(false)
+	if _origin_y_spinbox:
+		_origin_y_spinbox.set_block_signals(true)
+		_origin_y_spinbox.value = _current_level.origin.y
+		_origin_y_spinbox.set_block_signals(false)
+
+
+## Point the Y-level spinbox at the current level's addressable range on the
+## active axis, and pull the current edit plane back inside it. Called whenever
+## the level, its size, or its origin changes.
+func _sync_y_level_range() -> void:
+	if not _current_level or not _y_level_spinbox:
+		return
+
+	var min_cell := _current_level.get_min_cell()
+	var max_cell := _current_level.get_max_cell()
+	var lo: int
+	var hi: int
+	match _grid_orientation:
+		GRID_XY:
+			lo = min_cell.z
+			hi = max_cell.z
+		GRID_YZ:
+			lo = min_cell.x
+			hi = max_cell.x
+		_:
+			lo = min_cell.y
+			hi = max_cell.y
+
+	_y_level_spinbox.set_block_signals(true)
+	_y_level_spinbox.min_value = lo
+	_y_level_spinbox.max_value = hi
+	_current_y_level = clampi(_current_y_level, lo, hi)
+	_y_level_spinbox.value = _current_y_level
+	_y_level_spinbox.set_block_signals(false)
+
+
+## Default edit plane for a level: the middle of its vertical range, so there is
+## room to build both up and down from where you start.
+func _default_edit_plane() -> int:
+	if not _current_level:
+		return 0
+	var min_cell := _current_level.get_min_cell()
+	var max_cell := _current_level.get_max_cell()
+	match _grid_orientation:
+		GRID_XY:
+			return min_cell.z + (max_cell.z - min_cell.z) / 2
+		GRID_YZ:
+			return min_cell.x + (max_cell.x - min_cell.x) / 2
+		_:
+			# Prefer y=0 when it is inside the range — it is the natural "ground"
+			# line and keeps exported coordinates readable.
+			if min_cell.y <= 0 and max_cell.y >= 0:
+				return 0
+			return min_cell.y + (max_cell.y - min_cell.y) / 2
+
+
 func _change_y_level(delta: int) -> void:
 	if not _current_level:
 		return
 	
-	# Determine max based on grid orientation
+	# Determine the addressable range on the active axis. The level origin can
+	# be negative, so the floor is not necessarily 0.
+	var min_cell := _current_level.get_min_cell()
+	var max_cell := _current_level.get_max_cell()
+	var min_level: int
 	var max_level: int
 	match _grid_orientation:
-		GRID_XZ: max_level = _current_level.size_y - 1
-		GRID_XY: max_level = _current_level.size_z - 1
-		GRID_YZ: max_level = _current_level.size_x - 1
-		_: max_level = _current_level.size_y - 1
-	
-	var new_level := clampi(_current_y_level + delta, 0, max_level)
+		GRID_XZ:
+			min_level = min_cell.y
+			max_level = max_cell.y
+		GRID_XY:
+			min_level = min_cell.z
+			max_level = max_cell.z
+		GRID_YZ:
+			min_level = min_cell.x
+			max_level = max_cell.x
+		_:
+			min_level = min_cell.y
+			max_level = max_cell.y
+
+	var new_level := clampi(_current_y_level + delta, min_level, max_level)
 	if new_level != _current_y_level:
 		_current_y_level = new_level
 		if _y_level_spinbox:
@@ -877,7 +1005,9 @@ func _create_level_tools_tab() -> Control:
 	selected_tile_info.add_child(info_row)
 	info_panel.add_child(selected_tile_info)
 	content.add_child(info_panel)
-	
+
+	_create_tile_mesh_section(content)
+
 	# Hidden legacy dropdown for compatibility
 	_tile_selector = OptionButton.new()
 	_tile_selector.name = "TileSelector"
@@ -1022,8 +1152,9 @@ func _create_level_tools_tab() -> Control:
 	layer_container.add_child(layer_label)
 	_y_level_spinbox = SpinBox.new()
 	_y_level_spinbox.name = "YLevel"
-	_y_level_spinbox.min_value = 0
-	_y_level_spinbox.max_value = 100
+	# Range is set from the level's origin/size by _sync_y_level_range().
+	_y_level_spinbox.min_value = -500
+	_y_level_spinbox.max_value = 500
 	_y_level_spinbox.value = 0
 	_y_level_spinbox.value_changed.connect(_on_y_level_changed)
 	_y_level_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1217,7 +1348,28 @@ func _create_level_tools_tab() -> Control:
 	size_z.value_changed.connect(_on_level_size_changed)
 	size_grid.add_child(size_z)
 	content.add_child(size_grid)
-	
+
+	# Vertical floor of the editable space. Lowering it grows the level
+	# downward so you can build pits and tunnels below your starting plane.
+	var floor_row := HBoxContainer.new()
+	floor_row.add_child(_make_label("Floor Y:"))
+	_origin_y_spinbox = SpinBox.new()
+	_origin_y_spinbox.name = "LevelOriginY"
+	_origin_y_spinbox.min_value = -500
+	_origin_y_spinbox.max_value = 0
+	_origin_y_spinbox.value = 0
+	_origin_y_spinbox.tooltip_text = "Lowest Y cell you can edit.\nLower this to extend the level downward - the ceiling stays where it is and no existing tiles are lost."
+	_origin_y_spinbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_origin_y_spinbox.value_changed.connect(_on_level_origin_y_changed)
+	floor_row.add_child(_origin_y_spinbox)
+
+	var center_btn := Button.new()
+	center_btn.text = "Center"
+	center_btn.tooltip_text = "Put y=0 in the middle of the vertical range."
+	center_btn.pressed.connect(_on_center_level_vertically)
+	floor_row.add_child(center_btn)
+	content.add_child(floor_row)
+
 	content.add_child(HSeparator.new())
 
 	# Instance property overrides
@@ -1726,6 +1878,10 @@ func _update_tile_selector() -> void:
 # ============ TILE PALETTE SYSTEM ============
 
 var _tile_icon_buttons: Dictionary = {}  # tile_id -> Button
+var _tile_mesh_picker: EditorResourcePicker
+var _tile_mesh_collision_option: OptionButton
+var _tile_mesh_status: Label
+var _palette_dirty: bool = false
 var _current_category_filter: String = "Geometry"  # Default to Geometry
 var _palette_button_group: ButtonGroup
 
@@ -1881,6 +2037,180 @@ func _get_short_name(name: String) -> String:
 		return name.substr(0, 8) + ".."
 	return name
 
+# ============ Custom Mesh Assignment ============
+# The palette is built in code by default_tiles.gd and lives only in memory, so
+# there is no .tres to select in the FileSystem dock and the Inspector never
+# shows the tile fields. This section gives the selected tile a mesh picker, and
+# lets the palette be saved so the assignment survives a reload.
+
+func _create_tile_mesh_section(content: VBoxContainer) -> void:
+	content.add_child(HSeparator.new())
+	content.add_child(_make_label("Custom Mesh (selected tile)"))
+
+	_tile_mesh_picker = EditorResourcePicker.new()
+	_tile_mesh_picker.base_type = "Mesh"
+	_tile_mesh_picker.tooltip_text = "Drop an imported mesh (.obj/.glb) here to replace this tile's cube.\nThe tile still occupies its grid cell."
+	_tile_mesh_picker.resource_changed.connect(_on_tile_mesh_changed)
+	content.add_child(_tile_mesh_picker)
+
+	var collision_row := HBoxContainer.new()
+	collision_row.add_child(_make_label("Collision"))
+	_tile_mesh_collision_option = OptionButton.new()
+	_tile_mesh_collision_option.add_item("Grid Cell", 0)
+	_tile_mesh_collision_option.add_item("Mesh Exact", 1)
+	_tile_mesh_collision_option.add_item("None", 2)
+	_tile_mesh_collision_option.tooltip_text = "Grid Cell: fast merged boxes - use for anything you walk on.\nMesh Exact: precise trimesh silhouette.\nNone: decoration only."
+	_tile_mesh_collision_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tile_mesh_collision_option.item_selected.connect(_on_tile_mesh_collision_changed)
+	collision_row.add_child(_tile_mesh_collision_option)
+	content.add_child(collision_row)
+
+	var palette_row := HBoxContainer.new()
+	var save_btn := Button.new()
+	save_btn.text = "Save Palette"
+	save_btn.tooltip_text = "Save the tile palette to disk. Required for mesh assignments to survive a reload."
+	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_btn.pressed.connect(_on_save_palette_pressed)
+	palette_row.add_child(save_btn)
+
+	var load_btn := Button.new()
+	load_btn.text = "Load..."
+	load_btn.tooltip_text = "Load a previously saved tile palette."
+	load_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	load_btn.pressed.connect(_on_load_palette_pressed)
+	palette_row.add_child(load_btn)
+	content.add_child(palette_row)
+
+	_tile_mesh_status = Label.new()
+	_tile_mesh_status.name = "TileMeshStatus"
+	_tile_mesh_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tile_mesh_status.add_theme_font_size_override("font_size", 10)
+	_tile_mesh_status.modulate = Color(0.7, 0.7, 0.75)
+	_tile_mesh_status.text = "Select a tile to assign a mesh."
+	content.add_child(_tile_mesh_status)
+
+
+## Mirror the selected tile's mesh settings into the dock controls.
+func _refresh_tile_mesh_section() -> void:
+	if not _tile_mesh_picker or not is_instance_valid(_tile_mesh_picker):
+		return
+
+	var tile := _get_selected_tile_definition()
+	if tile == null:
+		_tile_mesh_picker.edited_resource = null
+		_tile_mesh_picker.editable = false
+		if _tile_mesh_collision_option:
+			_tile_mesh_collision_option.disabled = true
+		_set_tile_mesh_status("Select a tile to assign a mesh.")
+		return
+
+	_tile_mesh_picker.editable = true
+	# set_deferred avoids re-entering resource_changed while we are populating.
+	_tile_mesh_picker.set_block_signals(true)
+	_tile_mesh_picker.edited_resource = tile.mesh
+	_tile_mesh_picker.set_block_signals(false)
+
+	if _tile_mesh_collision_option:
+		_tile_mesh_collision_option.disabled = not tile.has_custom_mesh()
+		_tile_mesh_collision_option.set_block_signals(true)
+		_tile_mesh_collision_option.selected = int(tile.mesh_collision)
+		_tile_mesh_collision_option.set_block_signals(false)
+
+	if tile.has_custom_mesh():
+		_set_tile_mesh_status("'%s' uses a custom mesh. Save the palette to keep this." % tile.display_name)
+	else:
+		_set_tile_mesh_status("'%s' uses the default cube." % tile.display_name)
+
+
+func _set_tile_mesh_status(text: String) -> void:
+	if _tile_mesh_status and is_instance_valid(_tile_mesh_status):
+		_tile_mesh_status.text = text
+
+
+func _on_tile_mesh_changed(resource: Resource) -> void:
+	var tile := _get_selected_tile_definition()
+	if tile == null:
+		return
+	tile.mesh = resource as Mesh
+	_palette_dirty = true
+	_refresh_tile_mesh_section()
+	# Repaint placed tiles so the change is visible immediately.
+	if _grid_visualizer and is_instance_valid(_grid_visualizer):
+		_grid_visualizer.call("_rebuild_visualization")
+	if tile.has_custom_mesh():
+		_set_status("Mesh assigned to '%s' - Save Palette to keep it" % tile.display_name)
+	else:
+		_set_status("Mesh cleared from '%s'" % tile.display_name)
+
+
+func _on_tile_mesh_collision_changed(index: int) -> void:
+	var tile := _get_selected_tile_definition()
+	if tile == null:
+		return
+	tile.mesh_collision = index as XtremeTileDefinition.MeshCollision
+	_palette_dirty = true
+	_set_status("Collision mode set to '%s'" % _tile_mesh_collision_option.get_item_text(index))
+
+
+func _on_save_palette_pressed() -> void:
+	var dialog := EditorFileDialog.new()
+	dialog.file_mode = EditorFileDialog.FILE_MODE_SAVE_FILE
+	dialog.access = EditorFileDialog.ACCESS_RESOURCES
+	dialog.add_filter("*.tres", "Tile Palette")
+	dialog.current_path = _grid_settings.palette_path if (_grid_settings and _grid_settings.palette_path != "") else "res://tile_palette.tres"
+	dialog.file_selected.connect(_do_save_palette)
+	EditorInterface.get_base_control().add_child(dialog)
+	dialog.popup_centered_ratio(0.6)
+
+
+func _do_save_palette(path: String) -> void:
+	if _current_palette == null:
+		return
+	var err := ResourceSaver.save(_current_palette, path)
+	if err != OK:
+		_set_status("Failed to save palette (error %d)" % err)
+		push_error("[Xtreme Level Editor] Could not save palette to '%s': %d" % [path, err])
+		return
+
+	_palette_dirty = false
+	if _grid_settings:
+		_grid_settings.palette_path = path
+		ResourceSaver.save(_grid_settings, SETTINGS_PATH)
+	_set_status("Palette saved: %s" % path)
+	_set_tile_mesh_status("Palette saved. Open it in the FileSystem to edit every tile field in the Inspector.")
+	EditorInterface.get_resource_filesystem().scan()
+
+
+func _on_load_palette_pressed() -> void:
+	var dialog := EditorFileDialog.new()
+	dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_FILE
+	dialog.access = EditorFileDialog.ACCESS_RESOURCES
+	dialog.add_filter("*.tres", "Tile Palette")
+	dialog.file_selected.connect(_do_load_palette)
+	EditorInterface.get_base_control().add_child(dialog)
+	dialog.popup_centered_ratio(0.6)
+
+
+func _do_load_palette(path: String) -> void:
+	var loaded := load(path) as XtremeTilePalette
+	if loaded == null or loaded.tiles.is_empty():
+		_set_status("'%s' is not a valid tile palette" % path)
+		return
+
+	_current_palette = loaded
+	_palette_dirty = false
+	if _grid_settings:
+		_grid_settings.palette_path = path
+		ResourceSaver.save(_grid_settings, SETTINGS_PATH)
+
+	_sync_mode_shared_state()
+	if _grid_visualizer and is_instance_valid(_grid_visualizer):
+		_grid_visualizer.tile_palette = _current_palette
+		_grid_visualizer.call("_rebuild_visualization")
+	_initialize_tile_palette()
+	_set_status("Palette loaded: %s (%d tiles)" % [path, loaded.tiles.size()])
+
+
 func _on_tile_icon_pressed(tile: XtremeTileDefinition) -> void:
 	_select_tile(tile)
 
@@ -1905,7 +2235,8 @@ func _select_tile(tile: XtremeTileDefinition) -> void:
 		var btn: Button = _tile_icon_buttons[tile_id]
 		if btn and is_instance_valid(btn):
 			btn.button_pressed = (tile_id == _selected_tile_id)
-	
+
+	_refresh_tile_mesh_section()
 	_set_status("Selected: %s" % tile.display_name)
 
 func _on_category_filter_changed(index: int) -> void:
@@ -2158,6 +2489,33 @@ func _update_brush_preview(center_pos: Vector3i) -> void:
 	_brush_preview_mesh.mesh = box
 	_brush_preview_mesh.position = preview_center
 	_brush_preview_mesh.visible = true
+	_update_brush_ghost()
+
+
+## Show the real mesh inside the footprint box when the selected tile has one.
+func _update_brush_ghost() -> void:
+	if not _brush_preview_ghost or not is_instance_valid(_brush_preview_ghost):
+		return
+
+	var tile_def: XtremeTileDefinition = null
+	if _current_palette and _edit_mode != 1:  # not erase mode
+		tile_def = _current_palette.get_tile(_selected_tile_id)
+
+	if tile_def == null or not tile_def.has_custom_mesh():
+		_brush_preview_ghost.visible = false
+		_brush_preview_ghost.mesh = null
+		return
+
+	_brush_preview_ghost.mesh = tile_def.mesh
+	# Local to the footprint box, which is already centred on the cell, and
+	# rotated by the brush rotation the same way the export will rotate it.
+	var rot := Basis.from_euler(Vector3(
+		_current_rotation.x * PI / 2.0,
+		_current_rotation.y * PI / 2.0,
+		_current_rotation.z * PI / 2.0
+	))
+	_brush_preview_ghost.transform = Transform3D(rot, Vector3.ZERO) * tile_def.get_mesh_local_transform()
+	_brush_preview_ghost.visible = true
 
 func _is_placement_blocked(anchor_pos: Vector3i, tile_size: Vector3i) -> bool:
 	if not _current_level:
@@ -2169,12 +2527,8 @@ func _is_placement_blocked(anchor_pos: Vector3i, tile_size: Vector3i) -> bool:
 			for z in range(tile_size.z):
 				var check_pos := anchor_pos + Vector3i(x, y, z)
 				
-				# Check bounds
-				if check_pos.x < 0 or check_pos.x >= _current_level.size_x:
-					return true
-				if check_pos.y < 0 or check_pos.y >= _current_level.size_y:
-					return true
-				if check_pos.z < 0 or check_pos.z >= _current_level.size_z:
+				# Check bounds (origin-aware: the floor may be below 0)
+				if not _current_level._is_valid_position(check_pos):
 					return true
 				
 				# Check if cell is already occupied
@@ -2516,8 +2870,13 @@ func _on_new_level() -> void:
 	var size_z := _main_dock.find_child("LevelSizeZ", true, false) as SpinBox
 	if size_x and size_y and size_z:
 		_current_level.resize(int(size_x.value), int(size_y.value), int(size_z.value))
-		_y_level_spinbox.max_value = size_y.value - 1
-	
+		# Centre the editable space on y=0 so a new level starts in the MIDDLE
+		# of its vertical range. Starting at the floor means you can only ever
+		# build upward, which makes pits, tunnels and drops awkward to author.
+		_current_level.origin.y = -(_current_level.size_y / 2)
+	_current_y_level = _default_edit_plane()
+	_sync_y_level_range()
+
 	# Create manifest with default chunk set (Phase 3)
 	_current_manifest = XtremeLevelManifest.create_default(&"new_level", "New Level")
 	_current_chunk_set = _current_manifest.get_chunk_set(&"main")
@@ -2741,7 +3100,7 @@ func _on_level_size_changed(_value: float) -> void:
 		_current_level.resize(int(size_x.value), int(size_y.value), int(size_z.value))
 		if _current_chunk_set:
 			_current_chunk_set.size = Vector3i(_current_level.size_x, _current_level.size_y, _current_level.size_z)
-		_y_level_spinbox.max_value = size_y.value - 1
+		_sync_y_level_range()
 		if _grid_visualizer:
 			_grid_visualizer.rebuild()
 		_update_grid_lines()
@@ -3244,6 +3603,19 @@ func _create_brush_preview(parent: Node) -> void:
 	parent.add_child(_brush_preview_mesh)
 	# Do NOT set owner - this prevents saving with scene
 
+	# Ghost of the actual mesh for custom-mesh tiles, so you can see the shape
+	# you are placing and not just the cell it claims.
+	_brush_preview_ghost = MeshInstance3D.new()
+	_brush_preview_ghost.name = "Ghost"
+	var ghost_mat := StandardMaterial3D.new()
+	ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ghost_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.35)
+	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	ghost_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_brush_preview_ghost.material_override = ghost_mat
+	_brush_preview_ghost.visible = false
+	_brush_preview_mesh.add_child(_brush_preview_ghost)
+
 func _create_rect_preview(parent: Node) -> void:
 	_rect_preview_mesh = MeshInstance3D.new()
 	_rect_preview_mesh.name = "XtremeRectPreview_TEMP"
@@ -3275,6 +3647,12 @@ func _update_grid_lines() -> void:
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
 	var cell := _grid_settings.get_cell_size()
 	
+	# All extents start at the level origin, which may be negative.
+	var min_cell := _current_level.get_min_cell()
+	var x0 := min_cell.x * cell.x
+	var y0 := min_cell.y * cell.y
+	var z0 := min_cell.z * cell.z
+
 	match _grid_orientation:
 		GRID_XZ:  # Horizontal plane (floor/ceiling)
 			var y_pos := _current_y_level * cell.y
@@ -3282,44 +3660,44 @@ func _update_grid_lines() -> void:
 			var depth := _current_level.size_z
 			# Lines along X axis
 			for z in range(depth + 1):
-				var z_pos := z * cell.z
-				im.surface_add_vertex(Vector3(0, y_pos, z_pos))
-				im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
+				var z_pos := z0 + z * cell.z
+				im.surface_add_vertex(Vector3(x0, y_pos, z_pos))
+				im.surface_add_vertex(Vector3(x0 + width * cell.x, y_pos, z_pos))
 			# Lines along Z axis
 			for x in range(width + 1):
-				var x_pos := x * cell.x
-				im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
-				im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
-		
+				var x_pos := x0 + x * cell.x
+				im.surface_add_vertex(Vector3(x_pos, y_pos, z0))
+				im.surface_add_vertex(Vector3(x_pos, y_pos, z0 + depth * cell.z))
+
 		GRID_XY:  # Vertical plane facing Z (front wall)
 			var z_pos := _current_y_level * cell.z
 			var width := _current_level.size_x
 			var height := _current_level.size_y
 			# Lines along X axis
 			for y in range(height + 1):
-				var y_pos := y * cell.y
-				im.surface_add_vertex(Vector3(0, y_pos, z_pos))
-				im.surface_add_vertex(Vector3(width * cell.x, y_pos, z_pos))
+				var y_pos := y0 + y * cell.y
+				im.surface_add_vertex(Vector3(x0, y_pos, z_pos))
+				im.surface_add_vertex(Vector3(x0 + width * cell.x, y_pos, z_pos))
 			# Lines along Y axis
 			for x in range(width + 1):
-				var x_pos := x * cell.x
-				im.surface_add_vertex(Vector3(x_pos, 0, z_pos))
-				im.surface_add_vertex(Vector3(x_pos, height * cell.y, z_pos))
-		
+				var x_pos := x0 + x * cell.x
+				im.surface_add_vertex(Vector3(x_pos, y0, z_pos))
+				im.surface_add_vertex(Vector3(x_pos, y0 + height * cell.y, z_pos))
+
 		GRID_YZ:  # Vertical plane facing X (side wall)
 			var x_pos := _current_y_level * cell.x
 			var depth := _current_level.size_z
 			var height := _current_level.size_y
 			# Lines along Z axis
 			for y in range(height + 1):
-				var y_pos := y * cell.y
-				im.surface_add_vertex(Vector3(x_pos, y_pos, 0))
-				im.surface_add_vertex(Vector3(x_pos, y_pos, depth * cell.z))
+				var y_pos := y0 + y * cell.y
+				im.surface_add_vertex(Vector3(x_pos, y_pos, z0))
+				im.surface_add_vertex(Vector3(x_pos, y_pos, z0 + depth * cell.z))
 			# Lines along Y axis
 			for z in range(depth + 1):
-				var z_pos := z * cell.z
-				im.surface_add_vertex(Vector3(x_pos, 0, z_pos))
-				im.surface_add_vertex(Vector3(x_pos, height * cell.y, z_pos))
+				var z_pos := z0 + z * cell.z
+				im.surface_add_vertex(Vector3(x_pos, y0, z_pos))
+				im.surface_add_vertex(Vector3(x_pos, y0 + height * cell.y, z_pos))
 	
 	im.surface_end()
 	_grid_lines_mesh.mesh = im
@@ -4027,9 +4405,7 @@ func _sync_level_size_ui_from_current_level() -> void:
 	if size_z:
 		size_z.value = _current_level.size_z
 	if _y_level_spinbox:
-		_y_level_spinbox.max_value = maxf(float(_current_level.size_y - 1), 0.0)
-		_current_y_level = clampi(_current_y_level, 0, maxi(_current_level.size_y - 1, 0))
-		_y_level_spinbox.value = _current_y_level
+		_sync_y_level_range()
 
 
 func _copy_rails(source: Array[XtremeGrindRail]) -> Array[XtremeGrindRail]:
