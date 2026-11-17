@@ -1,11 +1,6 @@
-[gd_scene load_steps=3 format=3 uid="uid://d2j8qvrpfx7k0"]
+[gd_scene load_steps=2 format=3 uid="uid://d2j8qvrpfx7k0"]
 
 [ext_resource type="Script" path="res://addons/xtreme_level_editor/nodes/retro/retro_viewport_container.gd" id="1_retro_viewport"]
-
-[sub_resource type="SubViewport" id="SubViewport_gameplay"]
-handle_input_locally = false
-size = Vector2i(1440, 810)
-render_target_update_mode = 3
 
 [node name="RetroViewportContainer" type="SubViewportContainer"]
 anchors_preset = 15
