@@ -154,7 +154,7 @@ func _rebuild_coaster_track() -> void:
 		_add_track_segment(root, p0, p1, material, i)
 
 
-func _add_track_segment(root: Node3D, p0: Vector3, p1: Vector3, material: StandardMaterial3D, index: int) -> void:
+func _add_track_segment(root: Node3D, p0: Vector3, p1: Vector3, material: Material, index: int) -> void:
 	var direction := p1 - p0
 	var length := direction.length()
 	if length <= 0.001:
@@ -181,7 +181,7 @@ func _add_track_segment(root: Node3D, p0: Vector3, p1: Vector3, material: Standa
 	_add_track_box(segment, side_size, Vector3(-side_offset, side_height_center, 0.0), material)
 
 
-func _add_track_box(parent: Node3D, size: Vector3, local_pos: Vector3, material: StandardMaterial3D) -> void:
+func _add_track_box(parent: Node3D, size: Vector3, local_pos: Vector3, material: Material) -> void:
 	var collision := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
 	box_shape.size = size

@@ -63,6 +63,26 @@ func _ready() -> void:
 	rotation.y = 0
 	rotation.z = 0
 
+	if not Engine.is_editor_hint():
+		call_deferred("_ensure_curve_driver")
+
+## Levels exported from the editor (and older test scenes) have no
+## XtremeCurveDriver, so when run on their own the curve would stay pinned to
+## the world origin. If the running scene has no driver, add one here.
+## Wrapper scenes like Level01 already have one, so this does nothing there.
+func _ensure_curve_driver() -> void:
+	var tree := get_tree()
+	if tree == null or not tree.get_nodes_in_group(XtremeCurveDriver.GROUP).is_empty():
+		return
+	var host: Node = tree.current_scene if tree.current_scene else get_parent()
+	var driver := XtremeCurveDriver.new()
+	driver.name = "CurveDriver"
+	host.add_child(driver)
+	# Bend around the node this camera follows; with no target the driver
+	# falls back to the "player" group on its own.
+	if target and is_instance_valid(target):
+		driver.target_path = driver.get_path_to(target)
+
 func _process(delta: float) -> void:
 	if not target:
 		return

@@ -60,6 +60,14 @@ var _target: Node3D
 var _center: Vector3 = Vector3.ZERO
 var _has_center: bool = false
 
+## Group every driver joins, so other nodes can tell whether a level already
+## has one (see XtremeCamera.ensure_curve_driver).
+const GROUP := &"xtreme_curve_driver"
+
+
+func _enter_tree() -> void:
+	add_to_group(GROUP)
+
 
 func _ready() -> void:
 	# Run after the level's own _ready pass so the player exists.
